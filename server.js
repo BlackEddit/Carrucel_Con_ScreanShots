@@ -57,30 +57,40 @@ fs.mkdirSync(shotsDir, { recursive: true });
 async function captureAll() {
   //console.log('[DEBUG] Starting captureAll, targets:', TARGETS);
   
-  // Configuración específica para diferentes entornos
-  const browserConfig = {
-    headless: true,
-    timeout: 60000, // 60 segundos de timeout
-    executablePath: process.env.RENDER ? '/opt/render/.cache/ms-playwright/chromium_headless_shell-1187/chrome-linux/headless_shell' : undefined,
-    args: [
-      '--no-sandbox', 
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-extensions',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding'
-    ]
-  };
+  let browser;
   
-  // Lanza el navegador Playwright en modo headless
-  const browser = await chromium.launch(browserConfig);
-
   try {
+    // En Render, busca dinámicamente el browser instalado
+    if (process.env.RENDER) {
+      try {
+        const playwrightCache = '/opt/render/.cache/ms-playwright';
+        const dirs = fs.readdirSync(playwrightCache);
+        const chromiumDir = dirs.find(dir => dir.startsWith('chromium_headless_shell-'));
+        
+        if (chromiumDir) {
+          const executablePath = `${playwrightCache}/${chromiumDir}/chrome-linux/headless_shell`;
+          console.log('Usando browser en:', executablePath);
+          
+          browser = await chromium.launch({
+            headless: true,
+            executablePath,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+          });
+        }
+      } catch (e) {
+        console.log('Fallback a browser por defecto:', e.message);
+      }
+    }
+    
+    // Fallback: usar configuración por defecto
+    if (!browser) {
+      browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
+    }
+
+    // Procesar todas las URLs
     for (const t of TARGETS) {
       // Abre una nueva pestaña por cada URL
       const page = await browser.newPage();
@@ -121,11 +131,12 @@ async function captureAll() {
         await page.close();
       }
     }
-  } catch (error) {
-    console.error('Error en captureAll:', error);
+  } catch (mainError) {
+    console.error('Error principal en captureAll:', mainError);
   } finally {
-    // Cierra el navegador
-    await browser.close();
+    if (browser) {
+      await browser.close();
+    }
   }
 }
 
