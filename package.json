@@ -1,0 +1,14 @@
+{
+  "name": "carousel-link",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "express": "^4.19.2",
+    "puppeteer": "^23.6.0"
+  }
+}

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Carousel Link</title>
+  <style>
+    body { margin:0; font-family: system-ui, sans-serif; background:#0b0f13; color:#eee; }
+    header { padding:10px 16px; display:flex; justify-content:space-between; align-items:center; }
+    .wrap { display:grid; place-items:center; height: calc(100vh - 60px); }
+    img {
+      width: 100vw;
+      height: auto;
+      max-width: 100vw;
+      max-height: 100vh;
+      border-radius: 0;
+      box-shadow: none;
+      background: #111;
+      display: block;
+      margin: 0 auto;
+      object-fit: contain;
+    }
+    .pill { font-size:12px; opacity:.7 }
+    .controls { display:flex; gap:8px; }
+    button { background:#1e2836; color:#d2f7d0; border:1px solid #243246; padding:8px 12px; border-radius:10px; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+  </style>
+</head>
+<body>
+  <!-- Encabezado y controles eliminados para mostrar solo la imagen -->
+  <div class="wrap">
+    <img id="frame" alt="slide" />
+  </div>
+  <script>
+    let idx = 0, items = [], timer = null;
+
+    async function loadList(){
+      const res = await fetch('/api/list');
+      const data = await res.json();
+      items = data.items.filter(x => !!x); // ignora vacíos
+      show(0);
+    }
+
+    function show(i){
+      if (!items.length) return;
+      idx = (i + items.length) % items.length;
+      document.getElementById('frame').src = items[idx].img + `?t=${Date.now()}`; // cache-bust
+    }
+
+    function play(){
+      stop();
+      const s = 14000; // 14 segundos
+      timer = setInterval(() => show(idx+1), s);
+    }
+    function stop(){ if (timer) clearInterval(timer); timer = null; }
+
+    // Inicia el carrusel automáticamente al cargar
+    loadList().then(play);
+    // refresca lista cada 2 min por si hay nuevas capturas
+    setInterval(loadList, 120000);
+  </script>
+</body>
+</html>
