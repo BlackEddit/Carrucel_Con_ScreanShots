@@ -60,35 +60,27 @@ async function captureAll() {
   let browser;
   
   try {
-    // En Render, busca dinámicamente el browser instalado
-    if (process.env.RENDER) {
-      try {
-        const playwrightCache = '/opt/render/.cache/ms-playwright';
-        const dirs = fs.readdirSync(playwrightCache);
-        const chromiumDir = dirs.find(dir => dir.startsWith('chromium_headless_shell-'));
-        
-        if (chromiumDir) {
-          const executablePath = `${playwrightCache}/${chromiumDir}/chrome-linux/headless_shell`;
-          console.log('Usando browser en:', executablePath);
-          
-          browser = await chromium.launch({
-            headless: true,
-            executablePath,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-          });
-        }
-      } catch (e) {
-        console.log('Fallback a browser por defecto:', e.message);
-      }
-    }
-    
-    // Fallback: usar configuración por defecto
-    if (!browser) {
-      browser = await chromium.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-      });
-    }
+    // Configuración robusta para diferentes entornos
+    const browserConfig = {
+      headless: true,
+      args: [
+        '--no-sandbox', 
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-extensions',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=VizDisplayCompositor'
+      ]
+    };
+
+    console.log('Intentando lanzar browser...');
+    browser = await chromium.launch(browserConfig);
 
     // Procesar todas las URLs
     for (const t of TARGETS) {
