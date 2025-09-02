@@ -56,10 +56,29 @@ fs.mkdirSync(shotsDir, { recursive: true });
 // Función principal que toma capturas de todas las URLs
 async function captureAll() {
   //console.log('[DEBUG] Starting captureAll, targets:', TARGETS);
+  
+  // Configuración específica para diferentes entornos
+  const isRender = process.env.RENDER === 'true';
+  const browserConfig = {
+    headless: true,
+    args: [
+      '--no-sandbox', 
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process'
+    ]
+  };
+
+  // En Render, usar la ruta específica del browser
+  if (isRender) {
+    browserConfig.executablePath = '/opt/render/.cache/ms-playwright/chromium-1187/chrome-linux/chrome';
+  }
+  
   // Lanza el navegador Playwright en modo headless
-  const browser = await chromium.launch({
-    headless: true
-  });
+  const browser = await chromium.launch(browserConfig);
 
   try {
     for (const t of TARGETS) {
