@@ -4,7 +4,8 @@ import express from 'express'; // Framework para servidor web
 import fs from 'fs'; // Manejo de archivos
 import path from 'path'; // Manejo de rutas
 import { fileURLToPath } from 'url'; // Utilidad para rutas en ES Modules
-import { chromium } from 'playwright'; // Navegador automatizado para capturas
+import puppeteer from 'puppeteer-core'; // Navegador automatizado para capturas
+import chromium from '@sparticuz/chromium'; // Chromium optimizado para serverless
 import dotenv from 'dotenv'; // Para leer variables de entorno
 dotenv.config();
 
@@ -60,27 +61,15 @@ async function captureAll() {
   let browser;
   
   try {
-    // Configuración robusta para diferentes entornos
-    const browserConfig = {
-      headless: true,
-      args: [
-        '--no-sandbox', 
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-extensions',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-features=VizDisplayCompositor'
-      ]
-    };
-
-    console.log('Intentando lanzar browser...');
-    browser = await chromium.launch(browserConfig);
+    console.log('Iniciando navegador...');
+    
+    // Configuración optimizada para serverless/cloud
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
 
     // Procesar todas las URLs
     for (const t of TARGETS) {

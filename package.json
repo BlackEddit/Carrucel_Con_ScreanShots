@@ -9,6 +9,7 @@
   "dependencies": {
     "dotenv": "^17.2.1",
     "express": "^4.19.2",
-    "playwright": "^1.40.0"
+    "@sparticuz/chromium": "^121.0.0",
+    "puppeteer-core": "^21.0.0"
   }
 }
