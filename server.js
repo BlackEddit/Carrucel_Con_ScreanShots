@@ -58,7 +58,6 @@ async function captureAll() {
   //console.log('[DEBUG] Starting captureAll, targets:', TARGETS);
   
   // Configuración específica para diferentes entornos
-  const isRender = process.env.RENDER === 'true';
   const browserConfig = {
     headless: true,
     args: [
@@ -68,17 +67,19 @@ async function captureAll() {
       '--disable-gpu',
       '--no-first-run',
       '--no-zygote',
-      '--single-process'
+      '--single-process',
+      '--disable-extensions',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'
     ]
   };
-
-  // En Render, usar la ruta específica del browser
-  if (isRender) {
-    browserConfig.executablePath = '/opt/render/.cache/ms-playwright/chromium-1187/chrome-linux/chrome';
-  }
   
   // Lanza el navegador Playwright en modo headless
-  const browser = await chromium.launch(browserConfig);
+  const browser = await chromium.launch({
+    ...browserConfig,
+    channel: 'chrome'
+  });
 
   try {
     for (const t of TARGETS) {
