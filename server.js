@@ -20,7 +20,7 @@ const __dirname = path.dirname(__filename);
 const raw = process.env.DASHBOARD_URLS || '';
 const clean = raw.replace(/^"(.*)"$/, '$1'); // quita comillas , habia un pedo de que las URLs no se estaban procesando bien
 const TARGETS = clean.split(';;;').map((url, i) => ({ id: `dashboard${i+1}`, url: url.trim() })).filter(t => t.url);
-console.log('[DEBUG] TARGETS array:', TARGETS);
+// console.log('[DEBUG] TARGETS array:', TARGETS);
 
 // 2) Intervalo de refresco de capturas (minutos)
 // Cada cuánto tiempo se actualizan las capturas
