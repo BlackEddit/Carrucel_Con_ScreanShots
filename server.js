@@ -75,7 +75,7 @@ async function captureAll() {
     for (const t of TARGETS) {
       // Abre una nueva pestaña por cada URL
       const page = await browser.newPage();
-      await page.setViewportSize(VIEWPORT);
+      await page.setViewport(VIEWPORT);
 
       // Aplica headers si se definieron
       if (AUTH.headers && Object.keys(AUTH.headers).length) {
@@ -84,7 +84,7 @@ async function captureAll() {
 
       // Inyecta cookies si hay
       if (AUTH.cookies && AUTH.cookies.length) {
-        await page.context().addCookies(AUTH.cookies);
+        await page.setCookie(...AUTH.cookies);
       }
 
       try {
