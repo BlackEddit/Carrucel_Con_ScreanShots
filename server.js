@@ -60,6 +60,7 @@ async function captureAll() {
   // Configuración específica para diferentes entornos
   const browserConfig = {
     headless: true,
+    timeout: 60000, // 60 segundos de timeout
     args: [
       '--no-sandbox', 
       '--disable-setuid-sandbox',
@@ -76,10 +77,7 @@ async function captureAll() {
   };
   
   // Lanza el navegador Playwright en modo headless
-  const browser = await chromium.launch({
-    ...browserConfig,
-    channel: 'chrome'
-  });
+  const browser = await chromium.launch(browserConfig);
 
   try {
     for (const t of TARGETS) {
@@ -122,6 +120,8 @@ async function captureAll() {
         await page.close();
       }
     }
+  } catch (error) {
+    console.error('Error en captureAll:', error);
   } finally {
     // Cierra el navegador
     await browser.close();
