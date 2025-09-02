@@ -33,7 +33,7 @@ const VIEWPORT = { width: 3200, height: 1800, deviceScaleFactor: 1 };
 
 // 4) Timeout de carga por página (ms)
 // Tiempo máximo para que Puppeteer navegue a la página
-const PAGE_TIMEOUT_MS = 60_000;
+const PAGE_TIMEOUT_MS = 120_000; // 2 minutos
 
 // 5) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
 // Si necesitas autenticación, agrega aquí tus cookies o headers
@@ -88,10 +88,17 @@ async function captureAll() {
       }
 
       try {
-        // Navega a la URL y espera hasta 1 minuto
-        await page.goto(t.url, { waitUntil: 'networkidle0', timeout: PAGE_TIMEOUT_MS });
-        // Espera fija de 40 segundos para dar tiempo a que cargue el dashboard
-        await new Promise(res => setTimeout(res, 40000));
+        // Navega a la URL sin esperar que termine todo
+        console.log(`Navegando a ${t.id}: ${t.url}`);
+        await page.goto(t.url, { 
+          waitUntil: 'domcontentloaded', // Solo espera que cargue el HTML básico
+          timeout: PAGE_TIMEOUT_MS 
+        });
+        
+        // Espera fija para que aparezcan los gráficos
+        console.log(`Esperando carga para ${t.id}...`);
+        await new Promise(res => setTimeout(res, 30000)); // 30 segundos es suficiente
+        
         // Toma la captura de pantalla de lo que haya en ese momento
         const out = path.join(shotsDir, `${t.id}.png`);
         await page.screenshot({
