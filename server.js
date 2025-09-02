@@ -97,7 +97,7 @@ async function captureAll() {
         
         // Espera fija para que aparezcan los gráficos
         console.log(`Esperando carga para ${t.id}...`);
-        await new Promise(res => setTimeout(res, 30000)); // 30 segundos es suficiente
+        await new Promise(res => setTimeout(res, 60000)); // 60 segundos para Dynatrace
         
         // Toma la captura de pantalla de lo que haya en ese momento
         const out = path.join(shotsDir, `${t.id}.png`);
