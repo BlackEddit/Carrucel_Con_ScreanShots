@@ -89,7 +89,7 @@ async function captureAll() {
 
       try {
         // Navega a la URL y espera hasta 1 minuto
-        await page.goto(t.url, { waitUntil: 'networkidle', timeout: PAGE_TIMEOUT_MS });
+        await page.goto(t.url, { waitUntil: 'networkidle0', timeout: PAGE_TIMEOUT_MS });
         // Espera fija de 40 segundos para dar tiempo a que cargue el dashboard
         await new Promise(res => setTimeout(res, 40000));
         // Toma la captura de pantalla de lo que haya en ese momento
