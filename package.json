@@ -9,6 +9,6 @@
   "dependencies": {
     "dotenv": "^17.2.1",
     "express": "^4.19.2",
-    "puppeteer": "^23.11.1"
+    "playwright": "^1.40.0"
   }
 }

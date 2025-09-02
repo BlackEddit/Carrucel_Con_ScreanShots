@@ -4,7 +4,7 @@ import express from 'express'; // Framework para servidor web
 import fs from 'fs'; // Manejo de archivos
 import path from 'path'; // Manejo de rutas
 import { fileURLToPath } from 'url'; // Utilidad para rutas en ES Modules
-import puppeteer from 'puppeteer'; // Navegador automatizado para capturas
+import { chromium } from 'playwright'; // Navegador automatizado para capturas
 import dotenv from 'dotenv'; // Para leer variables de entorno
 dotenv.config();
 
@@ -56,17 +56,16 @@ fs.mkdirSync(shotsDir, { recursive: true });
 // Función principal que toma capturas de todas las URLs
 async function captureAll() {
   //console.log('[DEBUG] Starting captureAll, targets:', TARGETS);
-  // Lanza el navegador Puppeteer en modo headless
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  // Lanza el navegador Playwright en modo headless
+  const browser = await chromium.launch({
+    headless: true
   });
 
   try {
     for (const t of TARGETS) {
       // Abre una nueva pestaña por cada URL
       const page = await browser.newPage();
-      await page.setViewport(VIEWPORT);
+      await page.setViewportSize(VIEWPORT);
 
       // Aplica headers si se definieron
       if (AUTH.headers && Object.keys(AUTH.headers).length) {
@@ -75,12 +74,12 @@ async function captureAll() {
 
       // Inyecta cookies si hay
       if (AUTH.cookies && AUTH.cookies.length) {
-        await page.setCookie(...AUTH.cookies);
+        await page.context().addCookies(AUTH.cookies);
       }
 
       try {
         // Navega a la URL y espera hasta 1 minuto
-        await page.goto(t.url, { waitUntil: 'networkidle2', timeout: PAGE_TIMEOUT_MS });
+        await page.goto(t.url, { waitUntil: 'networkidle', timeout: PAGE_TIMEOUT_MS });
         // Espera fija de 40 segundos para dar tiempo a que cargue el dashboard
         await new Promise(res => setTimeout(res, 40000));
         // Toma la captura de pantalla de lo que haya en ese momento
