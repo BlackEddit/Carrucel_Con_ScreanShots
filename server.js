@@ -61,6 +61,7 @@ async function captureAll() {
   const browserConfig = {
     headless: true,
     timeout: 60000, // 60 segundos de timeout
+    executablePath: process.env.RENDER ? '/opt/render/.cache/ms-playwright/chromium_headless_shell-1187/chrome-linux/headless_shell' : undefined,
     args: [
       '--no-sandbox', 
       '--disable-setuid-sandbox',
