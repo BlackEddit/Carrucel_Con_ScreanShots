@@ -97,8 +97,8 @@ async function captureAll() {
         
         // Espera fija para que aparezcan los gráficos
         console.log(`Esperando carga para ${t.id}...`);
-        await new Promise(res => setTimeout(res, 90000)); // 90 segundos para dashboards pesados
-        
+        await new Promise(res => setTimeout(res, 190000)); // 190 segundos para dashboards pesados
+
         // Toma la captura de pantalla de lo que haya en ese momento
         const out = path.join(shotsDir, `${t.id}.png`);
         await page.screenshot({
