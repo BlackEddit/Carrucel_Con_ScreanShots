@@ -103,7 +103,7 @@ async function captureAll() {
         await page.screenshot({
           path: out,
           clip: {
-            x: 0, // desde la izquierda
+            x: 0, // desde la izquierdas
             y: 0, // desde arriba
             width: Math.floor(VIEWPORT.width * (2/3)), // 2/3 del ancho
             height: Math.floor(VIEWPORT.height * (2/3)) // 2/3 del alto
