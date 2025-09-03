@@ -33,7 +33,7 @@ const VIEWPORT = { width: 3200, height: 1800, deviceScaleFactor: 1 };
 
 // 4) Timeout de carga por página (ms)
 // Tiempo máximo para que Puppeteer navegue a la página
-const PAGE_TIMEOUT_MS = 120_000; // 2 minutos
+const PAGE_TIMEOUT_MS = 180_000; // 3 minutos para dashboards pesados
 
 // 5) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
 // Si necesitas autenticación, agrega aquí tus cookies o headers
@@ -97,7 +97,7 @@ async function captureAll() {
         
         // Espera fija para que aparezcan los gráficos
         console.log(`Esperando carga para ${t.id}...`);
-        await new Promise(res => setTimeout(res, 60000)); // 60 segundos para Dynatrace
+        await new Promise(res => setTimeout(res, 90000)); // 90 segundos para dashboards pesados
         
         // Toma la captura de pantalla de lo que haya en ese momento
         const out = path.join(shotsDir, `${t.id}.png`);
