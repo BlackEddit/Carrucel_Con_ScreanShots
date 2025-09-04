@@ -37,7 +37,7 @@ const PAGE_TIMEOUT_MS = 90_000; // 1.5 minutos para dashboards pesados
 
 // 5) Configuración de captura SECUENCIAL optimizada para 512MB RAM
 const MAX_CONCURRENT_CAPTURES = 1; // Solo 1 dashboard por vez para evitar OOM
-const WAIT_TIME_PER_DASHBOARD = 15000; // 15 segundos - más agresivo
+const WAIT_TIME_PER_DASHBOARD = 90000; // 90 segundos - más tiempo para que carguen completamente
 
 // 6) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
 // Si necesitas autenticación, agrega aquí tus cookies o headers
@@ -101,10 +101,16 @@ let failedCaptures = 0;
 
 // Función para capturar un dashboard individual con reintentos
 async function captureWithRetries(browser, target, maxRetries = 2) {
+  // Usar tiempo completo para todos los dashboards
+  const waitTime = WAIT_TIME_PER_DASHBOARD;
+  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     let page;
     try {
       console.log(`Navegando a ${target.id} (intento ${attempt}/${maxRetries}): ${target.url}`);
+      if (isInitialLoad) {
+        console.log(`🎯 Carga inicial - esperando ${waitTime/1000}s para renderizado completo`);
+      }
       
       // Crear nueva página con timeout individual
       page = await browser.newPage();
@@ -125,12 +131,28 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
       }
 
       await page.goto(target.url, { 
-        waitUntil: 'domcontentloaded',
+        waitUntil: 'networkidle2', // Espera a que la red esté tranquila (mejor para dashboards)
         timeout: PAGE_TIMEOUT_MS
       });
       
-      console.log(`Esperando carga para ${target.id}...`);
-      await new Promise(res => setTimeout(res, WAIT_TIME_PER_DASHBOARD)); // Tiempo reducido
+      console.log(`Esperando carga completa para ${target.id}... (${waitTime/1000}s)`);
+      
+      // Esperar tiempo base
+      await new Promise(res => setTimeout(res, waitTime));
+      
+      // Verificar si hay elementos de loading y esperar un poco más si es necesario
+      try {
+        const loadingElements = await page.$$eval('[class*="loading"], [class*="Loading"], .dt-loading', 
+          elements => elements.length
+        );
+        
+        if (loadingElements > 0) {
+          console.log(`⏳ ${target.id} todavía cargando, esperando 30s adicionales...`);
+          await new Promise(res => setTimeout(res, 30000));
+        }
+      } catch (e) {
+        // Si no puede evaluar, simplemente continúa
+      }
       
       const out = path.join(shotsDir, `${target.id}.png`);
       await page.screenshot({
@@ -138,8 +160,8 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
         clip: {
           x: 0,
           y: 0,
-          width: Math.floor(VIEWPORT.width * (2/3)),
-          height: Math.floor(VIEWPORT.height * (2/3))
+          width: Math.floor(VIEWPORT.width * (2/3)), // 2/3 del ancho = 2133px
+          height: Math.floor(VIEWPORT.height * (2/3)) // 2/3 del alto = 1200px
         },
         timeout: 45000 // 45 segundos para screenshot
       });
@@ -176,37 +198,46 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
   return false;
 }
 
-// Función para procesar dashboards en lotes paralelos
+// Función para procesar dashboards con prioridad
 async function captureInBatches(browser, targets, batchSize) {
   const results = [];
   
-  for (let i = 0; i < targets.length; i += batchSize) {
-    const batch = targets.slice(i, i + batchSize);
-    console.log(`\n🚀 Procesando lote ${Math.floor(i/batchSize) + 1}: ${batch.map(t => t.id).join(', ')}`);
+  // FASE 1: Capturar los primeros 3 dashboards con tiempo completo
+  console.log(`\n🚀 FASE 1: Capturando primeros 3 dashboards con tiempo completo (60s cada uno)`);
+  const priorityTargets = targets.slice(0, 3);
+  
+  for (const target of priorityTargets) {
+    console.log(`\n🎯 Capturando dashboard prioritario: ${target.id}`);
+    const success = await captureWithRetries(browser, target, 2, true); // isInitialLoad = true
+    results.push({ target, success });
+    captureProgress++;
+    console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
     
-    // Capturar todos los dashboards del lote en paralelo
-    const batchPromises = batch.map(target => 
-      captureWithRetries(browser, target).then(success => {
-        captureProgress++;
-        console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
-        return { target, success };
-      })
-    );
+    // Pausa entre dashboards prioritarios
+    console.log(`⏱️  Pausa de 3 segundos...`);
+    await new Promise(res => setTimeout(res, 3000));
+  }
+  
+  console.log(`\n✅ FASE 1 COMPLETADA: ${priorityTargets.length} dashboards prioritarios listos para el carrusel!`);
+  
+  // FASE 2: Capturar el resto con tiempo reducido
+  const remainingTargets = targets.slice(3);
+  if (remainingTargets.length > 0) {
+    console.log(`\n🚀 FASE 2: Capturando ${remainingTargets.length} dashboards restantes con tiempo optimizado`);
     
-    const batchResults = await Promise.all(batchPromises);
-    results.push(...batchResults);
-    
-    // Pausa corta entre lotes para liberar memoria
-    if (i + batchSize < targets.length) {
-      console.log(`⏱️  Pausa de 5 segundos y limpieza de memoria...`);
+    for (const target of remainingTargets) {
+      console.log(`\n📊 Capturando dashboard: ${target.id}`);
+      const success = await captureWithRetries(browser, target, 2, false); // isInitialLoad = false
+      results.push({ target, success });
+      captureProgress++;
+      console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
       
-      // Forzar garbage collection si está disponible
+      // Pausa y limpieza entre dashboards
       if (global.gc) {
         global.gc();
         console.log(`🧹 Garbage collection ejecutado`);
       }
-      
-      await new Promise(res => setTimeout(res, 5000));
+      await new Promise(res => setTimeout(res, 2000));
     }
   }
   
@@ -215,8 +246,8 @@ async function captureInBatches(browser, targets, batchSize) {
 
 // Función principal que toma capturas de todas las URLs
 async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura SECUENCIAL de ${TARGETS.length} dashboards (optimizado para 512MB)`);
-  console.log(`🔧 Configuración: 1 dashboard por vez, ${WAIT_TIME_PER_DASHBOARD/1000}s de espera por dashboard`);
+  console.log(`[DEBUG] Iniciando captura CON PRIORIDAD de ${TARGETS.length} dashboards (optimizado para 512MB)`);
+  console.log(`🔧 Estrategia: 3 dashboards prioritarios (60s) + resto optimizado (${WAIT_TIME_PER_DASHBOARD/1000}s)`);
   
   captureInProgress = true;
   captureProgress = 0;
@@ -277,13 +308,14 @@ async function captureAll() {
   }
 }
 
-// 🚀 INICIO OPTIMIZADO PARA 512MB RAM - MODO SECUENCIAL
+// 🚀 INICIO OPTIMIZADO PARA 512MB RAM - ESTRATEGIA DE CARGA PRIORITARIA
 console.log('\n🎯 ============ INICIANDO SISTEMA DE DASHBOARDS ============');
 console.log(`📊 Total de dashboards configurados: ${TARGETS.length}`);
-console.log(`💾 Modo de captura: SECUENCIAL (para evitar OOM en 512MB)`);
-console.log(`⚡ Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
+console.log(`💾 Modo de captura: SECUENCIAL CON PRIORIDAD`);
+console.log(`🎯 FASE 1: Primeros 3 dashboards (60s cada uno) = ~3 minutos`);
+console.log(`⚡ FASE 2: Resto de dashboards (${WAIT_TIME_PER_DASHBOARD/1000}s cada uno)`);
 console.log(`🔄 Intervalo de actualización: ${CAPTURE_EVERY_MIN} minutos`);
-console.log(`⏱️  Tiempo estimado total: ~${Math.round(TARGETS.length * WAIT_TIME_PER_DASHBOARD / 1000 / 60)} minutos`);
+console.log(`⏱️  Tiempo estimado total: ~${Math.round((3*60 + (TARGETS.length-3)*WAIT_TIME_PER_DASHBOARD/1000)/60)} minutos`);
 
 // Crear placeholders para que el carrusel funcione inmediatamente
 createPlaceholderImages();
@@ -298,16 +330,27 @@ setInterval(() => {
   captureAll();
 }, CAPTURE_EVERY_MIN * 60 * 1000);
 
-// Endpoint que expone la lista actual de capturas para el front
+// Endpoint que expone la lista actual de capturas para el front - PROGRESIVO
 app.get('/api/list', (req, res) => {
-  // Devuelve la lista de imágenes y la fecha de generación
-  const items = TARGETS.map(t => ({ id: t.id, img: `/shots/${t.id}.png`, title: t.id }));
+  // Solo devuelve dashboards que ya tienen imagen capturada
+  const availableItems = TARGETS.filter(t => {
+    const imagePath = path.join(shotsDir, `${t.id}.png`);
+    return fs.existsSync(imagePath);
+  }).map(t => ({ 
+    id: t.id, 
+    img: `/shots/${t.id}.png?t=${Date.now()}`, // Cache bust
+    title: t.id 
+  }));
+  
+  console.log(`📋 API List: ${availableItems.length}/${TARGETS.length} dashboards disponibles`);
+  
   res.json({ 
-    items, 
+    items: availableItems, 
     generatedAt: new Date().toISOString(),
     loading: captureInProgress,
     progress: captureProgress,
-    total: totalDashboards
+    total: totalDashboards,
+    available: availableItems.length
   });
 });
 

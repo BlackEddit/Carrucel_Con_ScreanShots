@@ -98,12 +98,18 @@
         // Actualizar información de progreso
         updateProgress(data);
         
-        // Si hay imágenes disponibles, oculta la pantalla de carga
-        if (items.length > 0 && !data.loading) {
+        // CARRUSEL PROGRESIVO: Arrancar tan pronto como haya al menos 1 dashboard
+        if (items.length > 0) {
           loadingScreen.classList.add('hidden');
-          show(0);
+          
+          // Si es la primera vez que tenemos dashboards, arrancar carrusel
+          if (!timer) {
+            console.log(`🚀 Iniciando carrusel con ${items.length} dashboard(s) disponible(s)`);
+            show(0);
+            play();
+          }
         } else {
-          // Si no hay imágenes o está cargando, mantiene la pantalla de carga
+          // Si no hay imágenes, mantiene la pantalla de carga
           loadingScreen.classList.remove('hidden');
         }
       } catch (error) {
@@ -118,9 +124,11 @@
         const percentage = Math.round((data.progress / data.total) * 100);
         const successful = data.successful || 0;
         const failed = data.failed || 0;
+        const available = data.available || 0;
         progressText.innerHTML = `
           Progreso: ${data.progress}/${data.total} dashboards (${percentage}%)<br>
-          ✅ Exitosos: ${successful} | ❌ Fallidos: ${failed}
+          ✅ Disponibles: ${available} | ❌ Fallidos: ${failed}<br>
+          ${available > 0 ? '🎯 Carrusel funcionando con dashboards disponibles' : '⏳ Esperando primer dashboard...'}
         `;
       } else if (!data.loading && data.total > 0) {
         const successful = data.successful || 0;
@@ -147,24 +155,21 @@
     }
     function stop(){ if (timer) clearInterval(timer); timer = null; }
 
-    // Inicia el carrusel automáticamente al cargar
-    loadList().then(() => {
-      if (items.length > 0) {
-        play();
-      }
-    });
+    // Inicia carga inicial
+    loadList();
     
-    // Al inicio, revisa cada 10 segundos si hay imágenes disponibles
-    const initialCheck = setInterval(() => {
+    // CARRUSEL PROGRESIVO: Revisa cada 5 segundos durante la carga inicial
+    const progressiveCheck = setInterval(() => {
       loadList().then(() => {
-        if (items.length > 0) {
-          play();
-          clearInterval(initialCheck); // Para de revisar cuando ya hay imágenes
+        // Si ya terminó la carga completa, cambiar a revisión normal
+        if (!items.loading || items.length >= 12) {
+          console.log(`🎯 Carga completa o suficientes dashboards. Cambiando a revisión cada 2 minutos.`);
+          clearInterval(progressiveCheck);
           // Después revisa cada 2 minutos normalmente
           setInterval(loadList, 120000);
         }
       });
-    }, 10000); // Cada 10 segundos al inicio
+    }, 5000); // Cada 5 segundos durante la carga inicial
   </script>
 </body>
 </html>
