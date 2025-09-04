@@ -116,9 +116,19 @@
       const progressText = document.getElementById('progress-text');
       if (data.loading && data.total > 0) {
         const percentage = Math.round((data.progress / data.total) * 100);
-        progressText.textContent = `Progreso: ${data.progress}/${data.total} dashboards (${percentage}%)`;
+        const successful = data.successful || 0;
+        const failed = data.failed || 0;
+        progressText.innerHTML = `
+          Progreso: ${data.progress}/${data.total} dashboards (${percentage}%)<br>
+          ✅ Exitosos: ${successful} | ❌ Fallidos: ${failed}
+        `;
       } else if (!data.loading && data.total > 0) {
-        progressText.textContent = `Completado: ${data.total} dashboards capturados`;
+        const successful = data.successful || 0;
+        const failed = data.failed || 0;
+        progressText.innerHTML = `
+          ✅ Completado: ${successful} exitosos de ${data.total} dashboards<br>
+          ${failed > 0 ? `⚠️ ${failed} dashboards fallaron` : '🎉 Todos los dashboards capturados exitosamente'}
+        `;
       } else {
         progressText.textContent = 'Iniciando captura de dashboards...';
       }

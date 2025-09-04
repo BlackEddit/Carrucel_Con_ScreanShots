@@ -58,39 +58,23 @@ fs.mkdirSync(shotsDir, { recursive: true });
 let captureInProgress = false;
 let captureProgress = 0;
 let totalDashboards = 0;
+let successfulCaptures = 0;
+let failedCaptures = 0;
 
-// Función principal que toma capturas de todas las URLs
-async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura de ${TARGETS.length} dashboards`);
-  
-  captureInProgress = true;
-  captureProgress = 0;
-  totalDashboards = TARGETS.length;
-  
-  let browser;
-  
-  try {
-    console.log('Iniciando navegador...');
-    
-    // Configuración optimizada para serverless/cloud y múltiples dashboards
-    browser = await puppeteer.launch({
-      args: [
-        ...chromium.args,
-        '--max-old-space-size=4096', // Más memoria para múltiples páginas
-        '--disable-background-timer-throttling',
-        '--disable-renderer-backgrounding'
-      ],
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-      protocolTimeout: 240000, // 4 minutos timeout para screenshots
-    });
-
-    // Procesar todas las URLs
-    for (const t of TARGETS) {
-      // Abre una nueva pestaña por cada URL
-      const page = await browser.newPage();
+// Función para capturar un dashboard individual con reintentos
+async function captureWithRetries(browser, target, maxRetries = 2) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let page;
+    try {
+      console.log(`Navegando a ${target.id} (intento ${attempt}/${maxRetries}): ${target.url}`);
+      
+      // Crear nueva página con timeout individual
+      page = await browser.newPage();
       await page.setViewport(VIEWPORT);
+      
+      // Configurar timeouts específicos para esta página
+      page.setDefaultNavigationTimeout(120000); // 2 minutos para navegación
+      page.setDefaultTimeout(60000); // 1 minuto para otras operaciones
 
       // Aplica headers si se definieron
       if (AUTH.headers && Object.keys(AUTH.headers).length) {
@@ -102,47 +86,111 @@ async function captureAll() {
         await page.setCookie(...AUTH.cookies);
       }
 
-      try {
-        // Navega a la URL sin esperar que termine todo
-        console.log(`Navegando a ${t.id}: ${t.url}`);
-        await page.goto(t.url, { 
-          waitUntil: 'domcontentloaded', // Solo espera que cargue el HTML básico
-          timeout: PAGE_TIMEOUT_MS 
-        });
-        
-        // Espera fija para que aparezcan los gráficos (reducida para 12 dashboards)
-        console.log(`Esperando carga para ${t.id}...`);
-        await new Promise(res => setTimeout(res, 45000)); // 45 segundos en lugar de 100
-        // Toma la captura de pantalla de lo que haya en ese momento
-        const out = path.join(shotsDir, `${t.id}.png`);
-        await page.screenshot({
-          path: out,
-          clip: {
-            x: 0, // desde la izquierdas
-            y: 0, // desde arriba
-            width: Math.floor(VIEWPORT.width * (2/3)), // 2/3 del ancho
-            height: Math.floor(VIEWPORT.height * (2/3)) // 2/3 del alto
-          }
-        });
-        console.log(`[OK] ${t.id} capturado exitosamente`);
-        captureProgress++;
-      } catch (e) {
-        // Si hay error, lo muestra en consola
-        console.error(`[FAIL] ${t.id} ${t.url}`, e.message);
-        captureProgress++; // Cuenta el progreso aunque falle
-      } finally {
-        // Cierra la pestaña
-        await page.close();
+      await page.goto(target.url, { 
+        waitUntil: 'domcontentloaded',
+        timeout: 120000 // 2 minutos por dashboard
+      });
+      
+      console.log(`Esperando carga para ${target.id}...`);
+      await new Promise(res => setTimeout(res, 45000)); // 45 segundos
+      
+      const out = path.join(shotsDir, `${target.id}.png`);
+      await page.screenshot({
+        path: out,
+        clip: {
+          x: 0,
+          y: 0,
+          width: Math.floor(VIEWPORT.width * (2/3)),
+          height: Math.floor(VIEWPORT.height * (2/3))
+        },
+        timeout: 60000 // 1 minuto para screenshot
+      });
+      
+      console.log(`[OK] ${target.id} capturado exitosamente`);
+      successfulCaptures++;
+      return true;
+      
+    } catch (error) {
+      console.error(`[FAIL] ${target.id} (intento ${attempt}/${maxRetries}):`, error.message);
+      if (attempt === maxRetries) {
+        failedCaptures++;
+        return false;
       }
+      // Esperar antes del siguiente intento
+      await new Promise(res => setTimeout(res, 5000));
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch (e) {
+          console.log(`Error cerrando página ${target.id}:`, e.message);
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Función principal que toma capturas de todas las URLs
+async function captureAll() {
+  console.log(`[DEBUG] Iniciando captura de ${TARGETS.length} dashboards`);
+  
+  captureInProgress = true;
+  captureProgress = 0;
+  successfulCaptures = 0;
+  failedCaptures = 0;
+  totalDashboards = TARGETS.length;
+  
+  let browser;
+  
+  try {
+    console.log('Iniciando navegador...');
+    
+    // Configuración optimizada para serverless/cloud y múltiples dashboards
+    browser = await puppeteer.launch({
+      args: [
+        ...chromium.args,
+        '--max-old-space-size=6144', // Más memoria
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding',
+        '--disable-dev-shm-usage',
+        '--no-zygote',
+        '--single-process'
+      ],
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      protocolTimeout: 300000, // 5 minutos timeout para operaciones críticas
+    });
+
+    // Procesar todas las URLs con control de errores mejorado
+    for (const target of TARGETS) {
+      try {
+        await captureWithRetries(browser, target);
+      } catch (error) {
+        console.error(`Error crítico con ${target.id}:`, error.message);
+        failedCaptures++;
+      } finally {
+        captureProgress++;
+        console.log(`Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
+      }
+      
+      // Pequeña pausa entre dashboards para liberar memoria
+      await new Promise(res => setTimeout(res, 2000));
     }
   } catch (mainError) {
     console.error('Error principal en captureAll:', mainError);
   } finally {
     if (browser) {
-      await browser.close();
+      try {
+        await browser.close();
+        console.log('Navegador cerrado correctamente');
+      } catch (e) {
+        console.error('Error cerrando navegador:', e.message);
+      }
     }
     captureInProgress = false;
-    console.log(`[FINISH] Captura completada: ${captureProgress}/${totalDashboards} dashboards`);
+    console.log(`[FINISH] Captura completada: ${successfulCaptures} exitosos, ${failedCaptures} fallidos de ${totalDashboards} total`);
   }
 }
 
@@ -170,6 +218,8 @@ app.get('/api/status', (req, res) => {
     loading: captureInProgress,
     progress: captureProgress,
     total: totalDashboards,
+    successful: successfulCaptures,
+    failed: failedCaptures,
     percentage: totalDashboards > 0 ? Math.round((captureProgress / totalDashboards) * 100) : 0
   });
 });
@@ -177,3 +227,25 @@ app.get('/api/status', (req, res) => {
 // Arranca el servidor en el puerto configurado
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Carousel listo en http://localhost:${PORT}`));
+
+// Manejo de señales para evitar que Render reinicie el servicio
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM recibido, cerrando gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT recibido, cerrando gracefully...');
+  process.exit(0);
+});
+
+// Manejo de errores no capturados para evitar crashes
+process.on('uncaughtException', (error) => {
+  console.error('Error no capturado:', error);
+  // No salir del proceso, solo loggear
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Promise rechazada no manejada en:', promise, 'razón:', reason);
+  // No salir del proceso, solo loggear
+});
