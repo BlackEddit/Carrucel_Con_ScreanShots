@@ -25,17 +25,21 @@ const TARGETS = clean.split(';;;').map((url, i) => ({ id: `dashboard${i+1}`, url
 
 // 2) Intervalo de refresco de capturas (minutos)
 // Cada cuánto tiempo se actualizan las capturas
-const CAPTURE_EVERY_MIN = 25; // 25 minutos para 12 dashboards
+const CAPTURE_EVERY_MIN = 30; // 30 minutos para 12 dashboards
 
 // 3) Viewport de las capturas
 // Tamaño de la ventana del navegador para la captura
 const VIEWPORT = { width: 3200, height: 1800, deviceScaleFactor: 1 };
 
-// 4) Timeout de carga por página (ms)
+// 4) Timeout de carga por página (ms) - REDUCIDO para captura inicial más rápida
 // Tiempo máximo para que Puppeteer navegue a la página
-const PAGE_TIMEOUT_MS = 180_000; // 3 minutos para dashboards pesados
+const PAGE_TIMEOUT_MS = 90_000; // 1.5 minutos para dashboards pesados
 
-// 5) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
+// 5) Configuración de captura paralela
+const MAX_CONCURRENT_CAPTURES = 4; // Máximo 4 dashboards al mismo tiempo
+const WAIT_TIME_PER_DASHBOARD = 25000; // 25 segundos por dashboard (reducido)
+
+// 6) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
 // Si necesitas autenticación, agrega aquí tus cookies o headers
 const AUTH = {
   cookies: [
@@ -53,6 +57,40 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Carpeta donde se guardan las capturas
 const shotsDir = path.join(__dirname, 'public', 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
+
+// Función para crear placeholder mientras se cargan los dashboards reales
+function createPlaceholderImages() {
+  console.log('🖼️  Creando imágenes placeholder para inicio inmediato...');
+  
+  TARGETS.forEach(target => {
+    const placeholderPath = path.join(shotsDir, `${target.id}.png`);
+    
+    // Solo crear placeholder si no existe la imagen real
+    if (!fs.existsSync(placeholderPath)) {
+      // Crear una imagen placeholder simple (puedes usar cualquier imagen base64)
+      const placeholderSVG = `
+        <svg width="2133" height="1200" xmlns="http://www.w3.org/2000/svg">
+          <rect width="100%" height="100%" fill="#1e2836"/>
+          <text x="50%" y="45%" text-anchor="middle" fill="#d2f7d0" font-size="48" font-family="Arial">
+            🔄 Cargando ${target.id}
+          </text>
+          <text x="50%" y="55%" text-anchor="middle" fill="#888" font-size="24" font-family="Arial">
+            Capturando dashboard en tiempo real...
+          </text>
+        </svg>
+      `;
+      
+      // Nota: En producción podrías usar una imagen PNG real o generarla con Canvas
+      // Por simplicidad, creamos un archivo temporal que luego será reemplazado
+      try {
+        fs.writeFileSync(placeholderPath + '.placeholder', placeholderSVG);
+        console.log(`📋 Placeholder creado para ${target.id}`);
+      } catch (e) {
+        console.log(`⚠️  No se pudo crear placeholder para ${target.id}:`, e.message);
+      }
+    }
+  });
+}
 
 // Variables para tracking del progreso
 let captureInProgress = false;
@@ -88,11 +126,11 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
 
       await page.goto(target.url, { 
         waitUntil: 'domcontentloaded',
-        timeout: 120000 // 2 minutos por dashboard
+        timeout: PAGE_TIMEOUT_MS
       });
       
       console.log(`Esperando carga para ${target.id}...`);
-      await new Promise(res => setTimeout(res, 45000)); // 45 segundos
+      await new Promise(res => setTimeout(res, WAIT_TIME_PER_DASHBOARD)); // Tiempo reducido
       
       const out = path.join(shotsDir, `${target.id}.png`);
       await page.screenshot({
@@ -103,7 +141,7 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
           width: Math.floor(VIEWPORT.width * (2/3)),
           height: Math.floor(VIEWPORT.height * (2/3))
         },
-        timeout: 60000 // 1 minuto para screenshot
+        timeout: 45000 // 45 segundos para screenshot
       });
       
       console.log(`[OK] ${target.id} capturado exitosamente`);
@@ -131,9 +169,40 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
   return false;
 }
 
+// Función para procesar dashboards en lotes paralelos
+async function captureInBatches(browser, targets, batchSize) {
+  const results = [];
+  
+  for (let i = 0; i < targets.length; i += batchSize) {
+    const batch = targets.slice(i, i + batchSize);
+    console.log(`\n🚀 Procesando lote ${Math.floor(i/batchSize) + 1}: ${batch.map(t => t.id).join(', ')}`);
+    
+    // Capturar todos los dashboards del lote en paralelo
+    const batchPromises = batch.map(target => 
+      captureWithRetries(browser, target).then(success => {
+        captureProgress++;
+        console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
+        return { target, success };
+      })
+    );
+    
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults);
+    
+    // Pausa corta entre lotes para liberar memoria
+    if (i + batchSize < targets.length) {
+      console.log(`⏱️  Pausa de 3 segundos antes del siguiente lote...`);
+      await new Promise(res => setTimeout(res, 3000));
+    }
+  }
+  
+  return results;
+}
+
 // Función principal que toma capturas de todas las URLs
 async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura de ${TARGETS.length} dashboards`);
+  console.log(`[DEBUG] Iniciando captura PARALELA de ${TARGETS.length} dashboards`);
+  console.log(`🔧 Configuración: ${MAX_CONCURRENT_CAPTURES} dashboards en paralelo, ${WAIT_TIME_PER_DASHBOARD/1000}s de espera por dashboard`);
   
   captureInProgress = true;
   captureProgress = 0;
@@ -142,62 +211,74 @@ async function captureAll() {
   totalDashboards = TARGETS.length;
   
   let browser;
+  const startTime = Date.now();
   
   try {
-    console.log('Iniciando navegador...');
+    console.log('🌐 Iniciando navegador...');
     
-    // Configuración optimizada para serverless/cloud y múltiples dashboards
+    // Configuración optimizada para captura paralela
     browser = await puppeteer.launch({
       args: [
         ...chromium.args,
-        '--max-old-space-size=6144', // Más memoria
+        '--max-old-space-size=8192', // 8GB para múltiples páginas paralelas
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-dev-shm-usage',
-        '--no-zygote',
-        '--single-process'
+        '--disable-gpu',
+        '--no-sandbox',
+        '--disable-setuid-sandbox'
       ],
       defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
-      protocolTimeout: 300000, // 5 minutos timeout para operaciones críticas
+      protocolTimeout: 300000, // 5 minutos timeout
     });
 
-    // Procesar todas las URLs con control de errores mejorado
-    for (const target of TARGETS) {
-      try {
-        await captureWithRetries(browser, target);
-      } catch (error) {
-        console.error(`Error crítico con ${target.id}:`, error.message);
-        failedCaptures++;
-      } finally {
-        captureProgress++;
-        console.log(`Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
-      }
-      
-      // Pequeña pausa entre dashboards para liberar memoria
-      await new Promise(res => setTimeout(res, 2000));
-    }
+    // Procesar dashboards en lotes paralelos
+    await captureInBatches(browser, TARGETS, MAX_CONCURRENT_CAPTURES);
+    
   } catch (mainError) {
-    console.error('Error principal en captureAll:', mainError);
+    console.error('❌ Error principal en captureAll:', mainError);
   } finally {
     if (browser) {
       try {
         await browser.close();
-        console.log('Navegador cerrado correctamente');
+        console.log('✅ Navegador cerrado correctamente');
       } catch (e) {
-        console.error('Error cerrando navegador:', e.message);
+        console.error('⚠️  Error cerrando navegador:', e.message);
       }
     }
     captureInProgress = false;
-    console.log(`[FINISH] Captura completada: ${successfulCaptures} exitosos, ${failedCaptures} fallidos de ${totalDashboards} total`);
+    
+    const endTime = Date.now();
+    const duration = Math.round((endTime - startTime) / 1000);
+    console.log(`\n🎉 [FINISH] Captura completada en ${duration} segundos:`);
+    console.log(`   ✅ Exitosos: ${successfulCaptures}`);
+    console.log(`   ❌ Fallidos: ${failedCaptures}`);
+    console.log(`   📊 Total: ${totalDashboards} dashboards`);
+    console.log(`   ⚡ Promedio: ${Math.round(duration/totalDashboards)} segundos por dashboard\n`);
   }
 }
 
-// Lanza una captura al inicio
+// 🚀 INICIO OPTIMIZADO DEL SISTEMA
+console.log('\n🎯 ============ INICIANDO SISTEMA DE DASHBOARDS ============');
+console.log(`📊 Total de dashboards configurados: ${TARGETS.length}`);
+console.log(`⚡ Modo de captura: PARALELO (${MAX_CONCURRENT_CAPTURES} simultáneos)`);
+console.log(`⏱️  Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
+console.log(`🔄 Intervalo de actualización: ${CAPTURE_EVERY_MIN} minutos`);
+
+// Crear placeholders para que el carrusel funcione inmediatamente
+createPlaceholderImages();
+
+// Lanza una captura al inicio (esto ahora será PARALELO y más rápido)
+console.log('\n🚀 Iniciando primera captura de dashboards...');
 captureAll();
+
 // Programa capturas periódicas cada N minutos
-setInterval(captureAll, CAPTURE_EVERY_MIN * 60 * 1000);
+setInterval(() => {
+  console.log(`\n🔄 Iniciando actualización programada de dashboards...`);
+  captureAll();
+}, CAPTURE_EVERY_MIN * 60 * 1000);
 
 // Endpoint que expone la lista actual de capturas para el front
 app.get('/api/list', (req, res) => {
