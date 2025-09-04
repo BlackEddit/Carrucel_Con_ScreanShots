@@ -24,21 +24,104 @@
     .controls { display:flex; gap:8px; }
     button { background:#1e2836; color:#d2f7d0; border:1px solid #243246; padding:8px 12px; border-radius:10px; cursor:pointer; }
     button:disabled { opacity:.5; cursor:not-allowed; }
+    
+    /* Pantalla de carga */
+    .loading-screen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #0b0f13;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      color: #eee;
+    }
+    
+    .loading-text {
+      font-size: 24px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 3px solid #1e2836;
+      border-top: 3px solid #d2f7d0;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .dashboard-count {
+      margin-top: 20px;
+      font-size: 16px;
+      opacity: 0.7;
+    }
+    
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
+  <!-- Pantalla de carga inicial -->
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-text">🔄 Cargando Dashboards...</div>
+    <div class="spinner"></div>
+    <div id="progress-info" class="dashboard-count">
+      Capturando screenshots de los dashboards<br>
+      <span id="progress-text">Iniciando...</span>
+    </div>
+  </div>
+  
   <!-- Encabezado y controles eliminados para mostrar solo la imagen -->
   <div class="wrap">
     <img id="frame" alt="slide" />
   </div>
   <script>
     let idx = 0, items = [], timer = null;
+    const loadingScreen = document.getElementById('loading-screen');
 
     async function loadList(){
-      const res = await fetch('/api/list');
-      const data = await res.json();
-      items = data.items.filter(x => !!x); // ignora vacíos
-      show(0);
+      try {
+        const res = await fetch('/api/list');
+        const data = await res.json();
+        items = data.items.filter(x => !!x); // ignora vacíos
+        
+        // Actualizar información de progreso
+        updateProgress(data);
+        
+        // Si hay imágenes disponibles, oculta la pantalla de carga
+        if (items.length > 0 && !data.loading) {
+          loadingScreen.classList.add('hidden');
+          show(0);
+        } else {
+          // Si no hay imágenes o está cargando, mantiene la pantalla de carga
+          loadingScreen.classList.remove('hidden');
+        }
+      } catch (error) {
+        console.log('Error cargando lista:', error);
+        // Mantiene pantalla de carga si hay error
+      }
+    }
+    
+    function updateProgress(data) {
+      const progressText = document.getElementById('progress-text');
+      if (data.loading && data.total > 0) {
+        const percentage = Math.round((data.progress / data.total) * 100);
+        progressText.textContent = `Progreso: ${data.progress}/${data.total} dashboards (${percentage}%)`;
+      } else if (!data.loading && data.total > 0) {
+        progressText.textContent = `Completado: ${data.total} dashboards capturados`;
+      } else {
+        progressText.textContent = 'Iniciando captura de dashboards...';
+      }
     }
 
     function show(i){
@@ -55,9 +138,23 @@
     function stop(){ if (timer) clearInterval(timer); timer = null; }
 
     // Inicia el carrusel automáticamente al cargar
-    loadList().then(play);
-    // refresca lista cada 2 min por si hay nuevas capturas
-    setInterval(loadList, 120000);
+    loadList().then(() => {
+      if (items.length > 0) {
+        play();
+      }
+    });
+    
+    // Al inicio, revisa cada 10 segundos si hay imágenes disponibles
+    const initialCheck = setInterval(() => {
+      loadList().then(() => {
+        if (items.length > 0) {
+          play();
+          clearInterval(initialCheck); // Para de revisar cuando ya hay imágenes
+          // Después revisa cada 2 minutos normalmente
+          setInterval(loadList, 120000);
+        }
+      });
+    }, 10000); // Cada 10 segundos al inicio
   </script>
 </body>
 </html>

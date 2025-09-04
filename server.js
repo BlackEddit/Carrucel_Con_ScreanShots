@@ -25,7 +25,7 @@ const TARGETS = clean.split(';;;').map((url, i) => ({ id: `dashboard${i+1}`, url
 
 // 2) Intervalo de refresco de capturas (minutos)
 // Cada cuánto tiempo se actualizan las capturas
-const CAPTURE_EVERY_MIN = 5;
+const CAPTURE_EVERY_MIN = 25; // 25 minutos para 12 dashboards
 
 // 3) Viewport de las capturas
 // Tamaño de la ventana del navegador para la captura
@@ -54,21 +54,36 @@ app.use(express.static(path.join(__dirname, 'public')));
 const shotsDir = path.join(__dirname, 'public', 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
 
+// Variables para tracking del progreso
+let captureInProgress = false;
+let captureProgress = 0;
+let totalDashboards = 0;
+
 // Función principal que toma capturas de todas las URLs
 async function captureAll() {
-  //console.log('[DEBUG] Starting captureAll, targets:', TARGETS);
+  console.log(`[DEBUG] Iniciando captura de ${TARGETS.length} dashboards`);
+  
+  captureInProgress = true;
+  captureProgress = 0;
+  totalDashboards = TARGETS.length;
   
   let browser;
   
   try {
     console.log('Iniciando navegador...');
     
-    // Configuración optimizada para serverless/cloud
+    // Configuración optimizada para serverless/cloud y múltiples dashboards
     browser = await puppeteer.launch({
-      args: chromium.args,
+      args: [
+        ...chromium.args,
+        '--max-old-space-size=4096', // Más memoria para múltiples páginas
+        '--disable-background-timer-throttling',
+        '--disable-renderer-backgrounding'
+      ],
       defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
+      protocolTimeout: 240000, // 4 minutos timeout para screenshots
     });
 
     // Procesar todas las URLs
@@ -95,9 +110,9 @@ async function captureAll() {
           timeout: PAGE_TIMEOUT_MS 
         });
         
-        // Espera fija para que aparezcan los gráficos
+        // Espera fija para que aparezcan los gráficos (reducida para 12 dashboards)
         console.log(`Esperando carga para ${t.id}...`);
-        await new Promise(res => setTimeout(res, 100000)); // 100 segundos para dashboards pesados
+        await new Promise(res => setTimeout(res, 45000)); // 45 segundos en lugar de 100
         // Toma la captura de pantalla de lo que haya en ese momento
         const out = path.join(shotsDir, `${t.id}.png`);
         await page.screenshot({
@@ -109,10 +124,12 @@ async function captureAll() {
             height: Math.floor(VIEWPORT.height * (2/3)) // 2/3 del alto
           }
         });
-        //console.log(`[OK] ${t.id} -> ${out}`);
+        console.log(`[OK] ${t.id} capturado exitosamente`);
+        captureProgress++;
       } catch (e) {
         // Si hay error, lo muestra en consola
         console.error(`[FAIL] ${t.id} ${t.url}`, e.message);
+        captureProgress++; // Cuenta el progreso aunque falle
       } finally {
         // Cierra la pestaña
         await page.close();
@@ -124,6 +141,8 @@ async function captureAll() {
     if (browser) {
       await browser.close();
     }
+    captureInProgress = false;
+    console.log(`[FINISH] Captura completada: ${captureProgress}/${totalDashboards} dashboards`);
   }
 }
 
@@ -136,7 +155,23 @@ setInterval(captureAll, CAPTURE_EVERY_MIN * 60 * 1000);
 app.get('/api/list', (req, res) => {
   // Devuelve la lista de imágenes y la fecha de generación
   const items = TARGETS.map(t => ({ id: t.id, img: `/shots/${t.id}.png`, title: t.id }));
-  res.json({ items, generatedAt: new Date().toISOString() });
+  res.json({ 
+    items, 
+    generatedAt: new Date().toISOString(),
+    loading: captureInProgress,
+    progress: captureProgress,
+    total: totalDashboards
+  });
+});
+
+// Endpoint de estado de progreso
+app.get('/api/status', (req, res) => {
+  res.json({
+    loading: captureInProgress,
+    progress: captureProgress,
+    total: totalDashboards,
+    percentage: totalDashboards > 0 ? Math.round((captureProgress / totalDashboards) * 100) : 0
+  });
 });
 
 // Arranca el servidor en el puerto configurado
