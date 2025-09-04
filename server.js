@@ -35,9 +35,9 @@ const VIEWPORT = { width: 3200, height: 1800, deviceScaleFactor: 1 };
 // Tiempo máximo para que Puppeteer navegue a la página
 const PAGE_TIMEOUT_MS = 90_000; // 1.5 minutos para dashboards pesados
 
-// 5) Configuración de captura paralela
-const MAX_CONCURRENT_CAPTURES = 4; // Máximo 4 dashboards al mismo tiempo
-const WAIT_TIME_PER_DASHBOARD = 25000; // 25 segundos por dashboard (reducido)
+// 5) Configuración de captura SECUENCIAL optimizada para 512MB RAM
+const MAX_CONCURRENT_CAPTURES = 1; // Solo 1 dashboard por vez para evitar OOM
+const WAIT_TIME_PER_DASHBOARD = 15000; // 15 segundos - más agresivo
 
 // 6) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
 // Si necesitas autenticación, agrega aquí tus cookies o headers
@@ -146,6 +146,13 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
       
       console.log(`[OK] ${target.id} capturado exitosamente`);
       successfulCaptures++;
+      
+      // Limpieza agresiva de memoria después de cada captura exitosa
+      if (global.gc) {
+        global.gc();
+        console.log(`🧹 Limpieza de memoria ejecutada para ${target.id}`);
+      }
+      
       return true;
       
     } catch (error) {
@@ -191,8 +198,15 @@ async function captureInBatches(browser, targets, batchSize) {
     
     // Pausa corta entre lotes para liberar memoria
     if (i + batchSize < targets.length) {
-      console.log(`⏱️  Pausa de 3 segundos antes del siguiente lote...`);
-      await new Promise(res => setTimeout(res, 3000));
+      console.log(`⏱️  Pausa de 5 segundos y limpieza de memoria...`);
+      
+      // Forzar garbage collection si está disponible
+      if (global.gc) {
+        global.gc();
+        console.log(`🧹 Garbage collection ejecutado`);
+      }
+      
+      await new Promise(res => setTimeout(res, 5000));
     }
   }
   
@@ -201,8 +215,8 @@ async function captureInBatches(browser, targets, batchSize) {
 
 // Función principal que toma capturas de todas las URLs
 async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura PARALELA de ${TARGETS.length} dashboards`);
-  console.log(`🔧 Configuración: ${MAX_CONCURRENT_CAPTURES} dashboards en paralelo, ${WAIT_TIME_PER_DASHBOARD/1000}s de espera por dashboard`);
+  console.log(`[DEBUG] Iniciando captura SECUENCIAL de ${TARGETS.length} dashboards (optimizado para 512MB)`);
+  console.log(`🔧 Configuración: 1 dashboard por vez, ${WAIT_TIME_PER_DASHBOARD/1000}s de espera por dashboard`);
   
   captureInProgress = true;
   captureProgress = 0;
@@ -216,26 +230,29 @@ async function captureAll() {
   try {
     console.log('🌐 Iniciando navegador...');
     
-    // Configuración optimizada para captura paralela
+    // Configuración ultra-optimizada para 512MB RAM
     browser = await puppeteer.launch({
       args: [
         ...chromium.args,
-        '--max-old-space-size=8192', // 8GB para múltiples páginas paralelas
+        '--max-old-space-size=400', // Solo 400MB para no rebasar límite
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-dev-shm-usage',
         '--disable-gpu',
         '--no-sandbox',
-        '--disable-setuid-sandbox'
+        '--disable-setuid-sandbox',
+        '--disable-web-security',
+        '--disable-extensions',
+        '--disable-plugins'
       ],
       defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
-      protocolTimeout: 300000, // 5 minutos timeout
+      protocolTimeout: 180000, // 3 minutos timeout reducido
     });
 
-    // Procesar dashboards en lotes paralelos
-    await captureInBatches(browser, TARGETS, MAX_CONCURRENT_CAPTURES);
+    // Procesar dashboards secuencialmente para evitar OOM
+    await captureInBatches(browser, TARGETS, MAX_CONCURRENT_CAPTURES); // Ahora será 1 por vez
     
   } catch (mainError) {
     console.error('❌ Error principal en captureAll:', mainError);
@@ -260,12 +277,13 @@ async function captureAll() {
   }
 }
 
-// 🚀 INICIO OPTIMIZADO DEL SISTEMA
+// 🚀 INICIO OPTIMIZADO PARA 512MB RAM - MODO SECUENCIAL
 console.log('\n🎯 ============ INICIANDO SISTEMA DE DASHBOARDS ============');
 console.log(`📊 Total de dashboards configurados: ${TARGETS.length}`);
-console.log(`⚡ Modo de captura: PARALELO (${MAX_CONCURRENT_CAPTURES} simultáneos)`);
-console.log(`⏱️  Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
+console.log(`💾 Modo de captura: SECUENCIAL (para evitar OOM en 512MB)`);
+console.log(`⚡ Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
 console.log(`🔄 Intervalo de actualización: ${CAPTURE_EVERY_MIN} minutos`);
+console.log(`⏱️  Tiempo estimado total: ~${Math.round(TARGETS.length * WAIT_TIME_PER_DASHBOARD / 1000 / 60)} minutos`);
 
 // Crear placeholders para que el carrusel funcione inmediatamente
 createPlaceholderImages();
