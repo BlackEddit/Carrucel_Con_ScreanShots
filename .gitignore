@@ -1,3 +1,28 @@
+# Directorios de dependencias
 node_modules/
-public/shots/
+
+# Archivos de entorno
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Imágenes generadas (pero mantener la carpeta)
+public/shots/*.png
+!public/shots/.gitkeep
+
+# Archivos temporales y logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+crash-*.log
+rejection-*.log
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de estado (no excluir para permitir persistencia)
+# .capture_state.json

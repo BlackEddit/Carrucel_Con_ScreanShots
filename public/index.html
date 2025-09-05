@@ -7,7 +7,7 @@
   <style>
     body { margin:0; font-family: system-ui, sans-serif; background:#0b0f13; color:#eee; }
     header { padding:10px 16px; display:flex; justify-content:space-between; align-items:center; }
-    .wrap { display:grid; place-items:center; height: calc(100vh - 60px); }
+    .wrap { display:grid; place-items:center; height: calc(100vh - 60px); position: relative; }
     img {
       width: 100vw;
       height: auto;
@@ -24,6 +24,24 @@
     .controls { display:flex; gap:8px; }
     button { background:#1e2836; color:#d2f7d0; border:1px solid #243246; padding:8px 12px; border-radius:10px; cursor:pointer; }
     button:disabled { opacity:.5; cursor:not-allowed; }
+    
+    /* Dashboard info overlay */
+    .dashboard-info {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(0,0,0,0.5);
+      padding: 10px 15px;
+      border-radius: 10px;
+      font-size: 14px;
+      opacity: 0.8;
+      z-index: 100;
+      transition: opacity 0.3s;
+    }
+    
+    .dashboard-info:hover {
+      opacity: 1;
+    }
     
     /* Pantalla de carga */
     .loading-screen {
@@ -65,9 +83,55 @@
       margin-top: 20px;
       font-size: 16px;
       opacity: 0.7;
+      text-align: center;
+    }
+    
+    /* Estado del servidor */
+    .server-status {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border-radius: 10px;
+      font-size: 12px;
+      opacity: 0.5;
+      z-index: 10;
+    }
+    
+    .server-status:hover {
+      opacity: 1;
     }
     
     .hidden { display: none !important; }
+    
+    /* Error message */
+    .error-message {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: rgba(220,53,69,0.9);
+      color: white;
+      padding: 10px 15px;
+      border-radius: 10px;
+      z-index: 1000;
+      max-width: 80%;
+      animation: fadeIn 0.3s ease-in;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .error-title {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    
+    .reconnecting {
+      color: #ffc107;
+    }
   </style>
 </head>
 <body>
@@ -81,26 +145,128 @@
     </div>
   </div>
   
-  <!-- Encabezado y controles eliminados para mostrar solo la imagen -->
+  <!-- Información de dashboard actual -->
+  <div id="dashboard-info" class="dashboard-info hidden">
+    Dashboard: <span id="current-name">-</span> (<span id="current-index">0</span>/<span id="total-count">0</span>)
+    <br>
+    Última actualización: <span id="last-updated">-</span>
+  </div>
+  
+  <!-- Estado del servidor -->
+  <div id="server-status" class="server-status hidden">
+    Server: <span id="server-pid">-</span> | Uptime: <span id="server-uptime">-</span>s
+  </div>
+  
+  <!-- Contenedor principal -->
   <div class="wrap">
     <img id="frame" alt="slide" />
   </div>
+  
+  <!-- Error message container -->
+  <div id="error-container"></div>
+  
   <script>
+    // Variables globales
     let idx = 0, items = [], timer = null;
+    let reconnectTimer = null;
+    let failedRequests = 0;
+    const MAX_FAILED_REQUESTS = 3;
+    const RECONNECT_INTERVAL = 10000; // 10 segundos
+    
+    // Referencias DOM
     const loadingScreen = document.getElementById('loading-screen');
+    const frame = document.getElementById('frame');
+    const dashboardInfo = document.getElementById('dashboard-info');
+    const currentName = document.getElementById('current-name');
+    const currentIndex = document.getElementById('current-index');
+    const totalCount = document.getElementById('total-count');
+    const lastUpdated = document.getElementById('last-updated');
+    const serverStatus = document.getElementById('server-status');
+    const serverPid = document.getElementById('server-pid');
+    const serverUptime = document.getElementById('server-uptime');
+    const errorContainer = document.getElementById('error-container');
 
-    async function loadList(){
+    // Función para formatear fecha
+    function formatDate(dateString) {
+      if (!dateString) return 'Desconocido';
+      
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMin = Math.floor(diffMs / 60000);
+      
+      if (diffMin < 1) {
+        return 'Hace unos segundos';
+      } else if (diffMin < 60) {
+        return `Hace ${diffMin} minuto${diffMin > 1 ? 's' : ''}`;
+      } else {
+        const hours = Math.floor(diffMin / 60);
+        if (hours < 24) {
+          return `Hace ${hours} hora${hours > 1 ? 's' : ''}`;
+        } else {
+          const days = Math.floor(hours / 24);
+          return `Hace ${days} día${days > 1 ? 's' : ''}`;
+        }
+      }
+    }
+    
+    // Función para mostrar errores
+    function showError(message, isReconnecting = false) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'error-message';
+      
+      const titleSpan = document.createElement('div');
+      titleSpan.className = 'error-title';
+      titleSpan.textContent = isReconnecting ? 'Reconectando...' : 'Error';
+      
+      const messageSpan = document.createElement('div');
+      messageSpan.textContent = message;
+      if (isReconnecting) messageSpan.className = 'reconnecting';
+      
+      errorDiv.appendChild(titleSpan);
+      errorDiv.appendChild(messageSpan);
+      
+      errorContainer.appendChild(errorDiv);
+      
+      // Auto-eliminar después de 10 segundos
+      setTimeout(() => {
+        if (errorDiv.parentNode) errorDiv.parentNode.removeChild(errorDiv);
+      }, 10000);
+    }
+
+    // Cargar lista de dashboards del servidor
+    async function loadList() {
       try {
+        // Obtener lista de dashboards
         const res = await fetch('/api/list');
-        const data = await res.json();
-        items = data.items.filter(x => !!x); // ignora vacíos
+        if (!res.ok) throw new Error(`Error de servidor: ${res.status}`);
         
-        // Actualizar información de progreso
+        const data = await res.json();
+        
+        // Reset contador de errores al tener éxito
+        failedRequests = 0;
+        
+        // Cancelar cualquier intento de reconexión en proceso
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+          reconnectTimer = null;
+        }
+        
+        // Filtrar items válidos
+        items = data.items.filter(x => x && x.available); 
+        
+        // Actualizar información de progreso y servidor
         updateProgress(data);
+        updateServerInfo(data.server);
         
         // CARRUSEL PROGRESIVO: Arrancar tan pronto como haya al menos 1 dashboard
         if (items.length > 0) {
           loadingScreen.classList.add('hidden');
+          dashboardInfo.classList.remove('hidden');
+          serverStatus.classList.remove('hidden');
+          
+          // Actualizar total de dashboards en el indicador
+          totalCount.textContent = items.length;
           
           // Si es la primera vez que tenemos dashboards, arrancar carrusel
           if (!timer) {
@@ -111,13 +277,32 @@
         } else {
           // Si no hay imágenes, mantiene la pantalla de carga
           loadingScreen.classList.remove('hidden');
+          dashboardInfo.classList.add('hidden');
+          serverStatus.classList.add('hidden');
         }
       } catch (error) {
-        console.log('Error cargando lista:', error);
-        // Mantiene pantalla de carga si hay error
+        console.error('Error cargando lista:', error);
+        
+        // Incrementar contador de errores
+        failedRequests++;
+        
+        // Mostrar error en la interfaz
+        if (failedRequests <= MAX_FAILED_REQUESTS) {
+          showError(`Error cargando dashboards: ${error.message}. Intento ${failedRequests}/${MAX_FAILED_REQUESTS}`);
+        }
+        
+        // Si hay demasiados errores consecutivos, intentar reconectar
+        if (failedRequests >= MAX_FAILED_REQUESTS && !reconnectTimer) {
+          showError(`Intentando reconectar con el servidor...`, true);
+          reconnectTimer = setTimeout(() => {
+            loadList();
+            reconnectTimer = null;
+          }, RECONNECT_INTERVAL);
+        }
       }
     }
     
+    // Actualizar información de progreso
     function updateProgress(data) {
       const progressText = document.getElementById('progress-text');
       if (data.loading && data.total > 0) {
@@ -141,34 +326,76 @@
         progressText.textContent = 'Iniciando captura de dashboards...';
       }
     }
-
-    function show(i){
-      if (!items.length) return;
-      idx = (i + items.length) % items.length;
-      document.getElementById('frame').src = items[idx].img + `?t=${Date.now()}`; // cache-bust
+    
+    // Actualizar información del servidor
+    function updateServerInfo(server) {
+      if (!server) return;
+      
+      serverPid.textContent = server.pid || 'Desconocido';
+      serverUptime.textContent = server.uptime ? Math.floor(server.uptime) : '-';
+      
+      // Si hay información de último estado, mostrarla
+      if (server.lastState) {
+        const ageMinutes = server.lastState.ageMinutes || 0;
+        if (ageMinutes > 0) {
+          serverStatus.title = `Última captura: hace ${ageMinutes} minutos (dashboard${server.lastState.lastIndex + 1})`;
+        }
+      }
     }
 
-    function play(){
-      stop();
+    // Mostrar un dashboard específico
+    function show(i) {
+      if (!items.length) return;
+      
+      idx = (i + items.length) % items.length;
+      const item = items[idx];
+      
+      // Actualizar src de la imagen con cache-bust
+      frame.src = item.img + `?t=${Date.now()}`;
+      
+      // Actualizar información del dashboard
+      currentName.textContent = item.id;
+      currentIndex.textContent = idx + 1;
+      lastUpdated.textContent = formatDate(item.lastModified);
+    }
+
+    // Iniciar reproducción automática
+    function play() {
+      stop(); // Detener timer existente
       const s = 14000; // 14 segundos
       timer = setInterval(() => show(idx+1), s);
     }
-    function stop(){ if (timer) clearInterval(timer); timer = null; }
+    
+    // Detener reproducción
+    function stop() { 
+      if (timer) clearInterval(timer); 
+      timer = null; 
+    }
+
+    // Manejar errores de carga de imágenes
+    frame.addEventListener('error', function(e) {
+      console.error('Error cargando imagen:', e);
+      // Intentar avanzar al siguiente dashboard si hay error
+      setTimeout(() => show(idx+1), 2000);
+    });
 
     // Inicia carga inicial
     loadList();
     
     // CARRUSEL PROGRESIVO: Revisa cada 5 segundos durante la carga inicial
     const progressiveCheck = setInterval(() => {
-      loadList().then(() => {
-        // Si ya terminó la carga completa, cambiar a revisión normal
-        if (!items.loading || items.length >= 12) {
-          console.log(`🎯 Carga completa o suficientes dashboards. Cambiando a revisión cada 2 minutos.`);
-          clearInterval(progressiveCheck);
-          // Después revisa cada 2 minutos normalmente
-          setInterval(loadList, 120000);
-        }
-      });
+      loadList().catch(err => console.error('Error en verificación progresiva:', err));
+      
+      // Si ya tenemos suficientes dashboards, cambiar a revisión normal
+      if (items.length >= 10) {
+        console.log(`🎯 Suficientes dashboards cargados (${items.length}). Cambiando a revisión cada 60 segundos.`);
+        clearInterval(progressiveCheck);
+        
+        // Después revisa cada 60 segundos normalmente
+        setInterval(() => {
+          loadList().catch(err => console.error('Error en verificación periódica:', err));
+        }, 60000); // Cada 60 segundos en modo normal
+      }
     }, 5000); // Cada 5 segundos durante la carga inicial
   </script>
 </body>

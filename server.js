@@ -1,4 +1,5 @@
-// Importa dependencias principales
+// BACKEND < Captura ScreenShots, cada 14 segundos con Puppeteer
+
 
 import express from 'express'; // Framework para servidor web
 import fs from 'fs'; // Manejo de archivos
@@ -9,15 +10,23 @@ import chromium from '@sparticuz/chromium'; // Chromium optimizado para serverle
 import dotenv from 'dotenv'; // Para leer variables de entorno
 dotenv.config();
 
+// DIAGNOSTICO: Registrar info del proceso al iniciar
+console.log('🔍 DIAGNÓSTICO - PID:', process.pid, 'UPTIME:', process.uptime().toFixed(2) + 's', 'TS:', new Date().toISOString());
 
-// Obtiene la ruta actual del archivo y su carpeta
+// DIAGNOSTICO: Registrar eventos del proceso
+process.on('exit', code => console.log('⚠️ EXIT - Código:', code, 'TS:', new Date().toISOString()));
+process.on('SIGINT', () => console.log('⚠️ SIGINT recibido - TS:', new Date().toISOString()));
+process.on('SIGTERM', () => console.log('⚠️ SIGTERM recibido - TS:', new Date().toISOString()));
+
+// CONFIGURACION DE REGLAS //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Obtiene la ruta actual del archivo y su carpeta, 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // 1) Configura aquí tus URLs (orden = orden del carrusel) desde variables de entorno
 // Usa DASHBOARD_URLS en .env, separadas por ";;;"
-// Para depuración, puedes dejar los logs de arranque y TARGETS, pero comenta los logs internos si no quieres ruido en producción.
-//console.log('[DEBUG] DASHBOARD_URLS raw:', process.env.DASHBOARD_URLS);
+// Para depuración.
+//console.log('[DEBUG] DASHBOARD_URLS raw:', process.env.DASHBOARD_URLS); // Ver cuántas URLs se están procesando
 const raw = process.env.DASHBOARD_URLS || '';
 const clean = raw.replace(/^"(.*)"$/, '$1'); // quita comillas , habia un pedo de que las URLs no se estaban procesando bien
 const TARGETS = clean.split(';;;').map((url, i) => ({ id: `dashboard${i+1}`, url: url.trim() })).filter(t => t.url);
@@ -25,7 +34,7 @@ const TARGETS = clean.split(';;;').map((url, i) => ({ id: `dashboard${i+1}`, url
 
 // 2) Intervalo de refresco de capturas (minutos)
 // Cada cuánto tiempo se actualizan las capturas
-const CAPTURE_EVERY_MIN = 30; // 30 minutos para 12 dashboards
+const CAPTURE_EVERY_MIN = 30; // 30 minutos para 12 dsashboards
 
 // 3) Viewport de las capturas
 // Tamaño de la ventana del navegador para la captura
@@ -41,6 +50,12 @@ const WAIT_TIME_PER_DASHBOARD = 90000; // 90 segundos - más tiempo para que car
 
 // 6) Opcional: headers/cookies de sesión (solo si tu seguridad lo permite)
 // Si necesitas autenticación, agrega aquí tus cookies o headers
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
 const AUTH = {
   cookies: [
     // { name: 'DTCookie', value: 'XXXX', domain: 'TU-DT', path: '/' }
@@ -63,33 +78,43 @@ function createPlaceholderImages() {
   console.log('🖼️  Creando imágenes placeholder para inicio inmediato...');
   
   TARGETS.forEach(target => {
-    const placeholderPath = path.join(shotsDir, `${target.id}.png`);
+    const imagePath = path.join(shotsDir, `${target.id}.png`);
     
     // Solo crear placeholder si no existe la imagen real
-    if (!fs.existsSync(placeholderPath)) {
-      // Crear una imagen placeholder simple (puedes usar cualquier imagen base64)
-      const placeholderSVG = `
-        <svg width="2133" height="1200" xmlns="http://www.w3.org/2000/svg">
-          <rect width="100%" height="100%" fill="#1e2836"/>
-          <text x="50%" y="45%" text-anchor="middle" fill="#d2f7d0" font-size="48" font-family="Arial">
-            🔄 Cargando ${target.id}
-          </text>
-          <text x="50%" y="55%" text-anchor="middle" fill="#888" font-size="24" font-family="Arial">
-            Capturando dashboard en tiempo real...
-          </text>
-        </svg>
-      `;
-      
-      // Nota: En producción podrías usar una imagen PNG real o generarla con Canvas
-      // Por simplicidad, creamos un archivo temporal que luego será reemplazado
+    if (!fs.existsSync(imagePath)) {
       try {
-        fs.writeFileSync(placeholderPath + '.placeholder', placeholderSVG);
+        // Crear una imagen placeholder simple (usando SVG como texto)
+        const placeholderSVG = `
+          <svg width="2133" height="1200" xmlns="http://www.w3.org/2000/svg">
+            <rect width="100%" height="100%" fill="#1e2836"/>
+            <text x="50%" y="45%" text-anchor="middle" fill="#d2f7d0" font-size="48" font-family="Arial">
+              🔄 Cargando ${target.id}
+            </text>
+            <text x="50%" y="55%" text-anchor="middle" fill="#888" font-size="24" font-family="Arial">
+              Capturando dashboard en tiempo real...
+            </text>
+          </svg>
+        `;
+        
+        // Escribir directamente el SVG al archivo de imagen
+        // En un entorno real deberías convertir SVG a PNG, pero esto funciona para testing
+        fs.writeFileSync(imagePath, placeholderSVG);
         console.log(`📋 Placeholder creado para ${target.id}`);
       } catch (e) {
         console.log(`⚠️  No se pudo crear placeholder para ${target.id}:`, e.message);
       }
+    } else {
+      console.log(`✅ Imagen existente para ${target.id}, usando la actual`);
     }
   });
+
+  // Verificar que todos los dashboards tengan imagen
+  const missingImages = TARGETS.filter(t => !fs.existsSync(path.join(shotsDir, `${t.id}.png`)));
+  if (missingImages.length > 0) {
+    console.log(`⚠️ ADVERTENCIA: ${missingImages.length} dashboards sin imagen:`, missingImages.map(t => t.id).join(', '));
+  } else {
+    console.log(`✅ Todos los dashboards tienen imagen disponible para el carrusel`);
+  }
 }
 
 // Variables para tracking del progreso
@@ -98,6 +123,11 @@ let captureProgress = 0;
 let totalDashboards = 0;
 let successfulCaptures = 0;
 let failedCaptures = 0;
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 // Función para capturar un dashboard individual con reintentos
 async function captureWithRetries(browser, target, maxRetries = 2, isInitialLoad = false) {
@@ -198,11 +228,114 @@ async function captureWithRetries(browser, target, maxRetries = 2, isInitialLoad
   return false;
 }
 
-// Función principal que toma capturas de todas las URLs - CON REINICIO DE NAVEGADOR
-async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura SECUENCIAL con reinicio de navegador cada 4 dashboards`);
-  console.log(`🔧 Configuración: ${WAIT_TIME_PER_DASHBOARD/1000}s por dashboard, reinicio cada 4`);
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// 📌 Archivo centinela para rastrear último dashboard capturado entre reinicios
+const CAPTURE_STATE_FILE = path.join(__dirname, '.capture_state.json');
+
+// Función para obtener el estado actual de captura
+function getLastCaptureState() {
+  try {
+    if (fs.existsSync(CAPTURE_STATE_FILE)) {
+      const data = fs.readFileSync(CAPTURE_STATE_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (e) {
+    console.error('❌ Error leyendo archivo de estado:', e.message);
+  }
+  return { lastIndex: -1, timestamp: 0 };
+}
+
+// Función para guardar el estado actual de captura
+function saveLastCaptureState(index) {
+  try {
+    const state = { 
+      lastIndex: index, 
+      timestamp: Date.now(),
+      pid: process.pid
+    };
+    fs.writeFileSync(CAPTURE_STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+    console.log(`🔒 Estado guardado: último dashboard capturado = ${index}`);
+  } catch (e) {
+    console.error('❌ Error guardando archivo de estado:', e.message);
+  }
+}
+
+// ✨ NUEVO: Función para capturar UN SOLO dashboard - Incremental
+async function captureOne(index) {
+  // DIAGNOSTICO: Registrar info antes de capturar
+  console.log(`🔍 CAPTURANDO DASHBOARD ${index+1}/${TARGETS.length} - PID: ${process.pid} - TS: ${new Date().toISOString()}`);
   
+  if (index < 0 || index >= TARGETS.length) {
+    console.error(`❌ Índice inválido: ${index}, rango válido: 0-${TARGETS.length-1}`);
+    return false;
+  }
+
+  const target = TARGETS[index];
+  console.log(`\n� Capturando individualmente: ${target.id}`);
+  
+  // Guardar estado ANTES de iniciar la captura para persistencia
+  saveLastCaptureState(index);
+  
+  let browser;
+  try {
+    console.log('🌐 Iniciando navegador para captura individual...');
+    
+    browser = await puppeteer.launch({
+      args: [
+        ...chromium.args,
+        '--max-old-space-size=400',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-sandbox'
+      ],
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      protocolTimeout: 180000,
+    });
+
+    // Intentar captura con retries
+    const result = await captureWithRetries(browser, target);
+    
+    // Actualizar contadores
+    if (result) {
+      successfulCaptures++;
+    } else {
+      failedCaptures++;
+    }
+    
+    console.log(`📊 Dashboard ${index+1}/${TARGETS.length} (${target.id}): ${result ? '✅ Éxito' : '❌ Fallido'}`);
+    
+    return result;
+  } catch (e) {
+    console.error(`❌ Error capturando ${target.id}:`, e.message);
+    return false;
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+        console.log(`✅ Navegador cerrado correctamente después de capturar ${target.id}`);
+      } catch (e) {
+        console.error(`⚠️ Error cerrando navegador:`, e.message);
+      }
+    }
+    
+    // Forzar liberación de memoria
+    if (global.gc) {
+      global.gc();
+      console.log(`🧹 Memoria liberada después de captura de ${target.id}`);
+    }
+  }
+}
+
+// Función principal que toma capturas de todas las URLs - VERSIÓN INCREMENTAL
+async function captureAll() {
+  console.log(`[DEBUG] Iniciando captura INCREMENTAL de dashboards (uno por uno)`);
+  console.log(`🔧 Configuración: ${WAIT_TIME_PER_DASHBOARD/1000}s por dashboard`);
+  
+  // Iniciar contadores
   captureInProgress = true;
   captureProgress = 0;
   successfulCaptures = 0;
@@ -210,59 +343,19 @@ async function captureAll() {
   totalDashboards = TARGETS.length;
   
   const startTime = Date.now();
-  const BATCH_SIZE = 4; // Reiniciar navegador cada 4 dashboards
   
   try {
-    // Procesar en lotes de 4 dashboards
-    for (let i = 0; i < TARGETS.length; i += BATCH_SIZE) {
-      const batch = TARGETS.slice(i, i + BATCH_SIZE);
-      console.log(`\n🔄 Procesando lote ${Math.floor(i/BATCH_SIZE) + 1}: ${batch.map(t => t.id).join(', ')}`);
+    // VERSIÓN INCREMENTAL: Capturar un dashboard a la vez
+    for (let i = 0; i < TARGETS.length; i++) {
+      console.log(`\n🔄 Capturando dashboard ${i+1}/${TARGETS.length}: ${TARGETS[i].id}`);
       
-      let browser;
-      try {
-        console.log('🌐 Iniciando navegador fresco...');
-        
-        browser = await puppeteer.launch({
-          args: [
-            ...chromium.args,
-            '--max-old-space-size=400',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-sandbox'
-          ],
-          defaultViewport: chromium.defaultViewport,
-          executablePath: await chromium.executablePath(),
-          headless: chromium.headless,
-          protocolTimeout: 180000,
-        });
-
-        // Procesar los dashboards de este lote
-        for (const target of batch) {
-          console.log(`\n📊 Capturando: ${target.id}`);
-          await captureWithRetries(browser, target);
-          captureProgress++;
-          console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
-          
-          // Pausa breve entre dashboards del mismo lote
-          await new Promise(res => setTimeout(res, 2000));
-        }
-        
-      } finally {
-        if (browser) {
-          try {
-            await browser.close();
-            console.log(`✅ Navegador del lote ${Math.floor(i/BATCH_SIZE) + 1} cerrado correctamente`);
-          } catch (e) {
-            console.error(`⚠️  Error cerrando navegador del lote: ${e.message}`);
-          }
-        }
-        
-        // Pausa entre lotes para liberar memoria del sistema
-        if (i + BATCH_SIZE < TARGETS.length) {
-          console.log(`🧹 Pausa de 10 segundos entre lotes para limpieza de memoria...`);
-          if (global.gc) global.gc();
-          await new Promise(res => setTimeout(res, 10000));
-        }
+      await captureOne(i);
+      captureProgress++;
+      
+      // Pequeña pausa entre dashboards para dejar respirar al sistema
+      if (i < TARGETS.length - 1) {
+        console.log(`⏸️ Pausa de 5 segundos antes del siguiente dashboard...`);
+        await new Promise(res => setTimeout(res, 5000));
       }
     }
     
@@ -280,83 +373,350 @@ async function captureAll() {
   }
 }
 
-// 🚀 INICIO CON REINICIO DE NAVEGADOR
+// 🚀 INICIO CON SISTEMA INCREMENTAL
 console.log('\n🎯 ============ INICIANDO SISTEMA DE DASHBOARDS ============');
 console.log(`📊 Total de dashboards configurados: ${TARGETS.length}`);
-console.log(`💾 Modo de captura: SECUENCIAL CON REINICIO`);
-console.log(`🔄 Reinicio de navegador cada 4 dashboards`);
+console.log(`💾 Modo de captura: INCREMENTAL (uno por uno)`);
 console.log(`⚡ Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
-console.log(`🔄 Intervalo de actualización: ${CAPTURE_EVERY_MIN} minutos`);
-console.log(`⏱️  Tiempo estimado total: ~${Math.round(TARGETS.length * WAIT_TIME_PER_DASHBOARD / 1000 / 60)} minutos`);
+console.log(`🔄 Intervalo de actualización INCREMENTAL: ${CAPTURE_EVERY_MIN} minutos`);
+console.log(`⏱️  Tiempo estimado para primera carga: ~${Math.round(TARGETS.length * (WAIT_TIME_PER_DASHBOARD + 5000) / 1000 / 60)} minutos`);
 
-// Iniciar captura inmediatamente
-console.log('\n🚀 Iniciando captura de dashboards...');
-captureAll();
+// Crear placeholders inmediatos para mostrar algo en el carrusel
+createPlaceholderImages();
 
-// Programar capturas cada 30 minutos
-setInterval(() => {
-  console.log(`\n🔄 Iniciando actualización programada de dashboards...`);
-  captureAll();
-}, CAPTURE_EVERY_MIN * 60 * 1000);
+// Verificar si hay estado previo y decidir si empezar desde el inicio o continuar
+const lastState = getLastCaptureState();
+console.log(`🔍 Estado previo detectado:`, lastState);
+
+// Iniciar captura incremental con primera ronda
+const startCaptures = async () => {
+  // Si es un reinicio y ya tenemos dashboards, capturar solo uno y programar los siguientes
+  if (lastState.lastIndex >= 0) {
+    console.log(`� REINICIO DETECTADO - Último dashboard capturado: ${lastState.lastIndex}`);
+    console.log(`⏱️  Tiempo desde última captura: ${((Date.now() - lastState.timestamp) / 1000 / 60).toFixed(1)} minutos`);
+    
+    // Empezar con el siguiente dashboard al último capturado
+    let nextIndex = (lastState.lastIndex + 1) % TARGETS.length;
+    console.log(`🎯 Comenzando con dashboard ${nextIndex + 1}/${TARGETS.length} (${TARGETS[nextIndex].id})`);
+    
+    // Capturar el siguiente dashboard
+    await captureOne(nextIndex);
+    
+    // Programar la captura rotativa
+    scheduleRotatingCaptures(nextIndex);
+  } else {
+    // Primera ejecución - capturar todo desde el inicio
+    console.log('\n🚀 Primera ejecución - Iniciando captura completa...');
+    await captureAll();
+    
+    // Programar actualizaciones rotativas
+    scheduleRotatingCaptures(0);
+  }
+};
+
+// Programar capturas rotativas (un dashboard a la vez)
+function scheduleRotatingCaptures(startIndex) {
+  let currentIndex = startIndex;
+  
+  // Calcular intervalo para que cada dashboard se actualice aproximadamente cada CAPTURE_EVERY_MIN minutos
+  const interval = Math.floor(CAPTURE_EVERY_MIN * 60 * 1000 / TARGETS.length);
+  console.log(`⏱️  Programando actualización rotativa: un dashboard cada ${Math.round(interval/1000)} segundos`);
+  
+  // Programar actualizaciones rotativas
+  const rotationInterval = setInterval(async () => {
+    try {
+      console.log(`\n🔄 Actualizando dashboard ${currentIndex + 1}/${TARGETS.length} (${TARGETS[currentIndex].id})`);
+      
+      // Capturar solo un dashboard
+      await captureOne(currentIndex);
+      
+      // Avanzar al siguiente dashboard
+      currentIndex = (currentIndex + 1) % TARGETS.length;
+      
+    } catch (e) {
+      console.error('❌ Error en actualización rotativa:', e);
+      // No detener el intervalo si hay un error, intentar con el siguiente
+      currentIndex = (currentIndex + 1) % TARGETS.length;
+    }
+  }, interval);
+  
+  // Asegurar que el intervalo no impida que Node.js salga
+  rotationInterval.unref();
+  
+  console.log(`✅ Sistema de actualización rotativa iniciado correctamente`);
+}
+
+// Iniciar el sistema
+startCaptures();
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Endpoint que expone la lista actual de capturas para el front - PROGRESIVO
 app.get('/api/list', (req, res) => {
-  // Solo devuelve dashboards que ya tienen imagen capturada
-  const availableItems = TARGETS.filter(t => {
-    const imagePath = path.join(shotsDir, `${t.id}.png`);
-    return fs.existsSync(imagePath);
-  }).map(t => ({ 
-    id: t.id, 
-    img: `/shots/${t.id}.png?t=${Date.now()}`, // Cache bust
-    title: t.id 
-  }));
-  
-  console.log(`📋 API List: ${availableItems.length}/${TARGETS.length} dashboards disponibles`);
-  
-  res.json({ 
-    items: availableItems, 
-    generatedAt: new Date().toISOString(),
-    loading: captureInProgress,
-    progress: captureProgress,
-    total: totalDashboards,
-    available: availableItems.length
-  });
+  try {
+    // Verificar todas las imágenes disponibles
+    const availableItems = TARGETS.map(t => {
+      const imagePath = path.join(shotsDir, `${t.id}.png`);
+      const exists = fs.existsSync(imagePath);
+      let lastModified = 0;
+      let size = 0;
+      
+      if (exists) {
+        try {
+          const stats = fs.statSync(imagePath);
+          lastModified = stats.mtime.getTime();
+          size = stats.size;
+        } catch (e) {
+          console.error(`Error obteniendo stats de ${t.id}:`, e.message);
+        }
+      }
+      
+      return { 
+        id: t.id, 
+        img: `/shots/${t.id}.png?t=${lastModified}`, // Cache bust con timestamp real
+        title: t.id,
+        available: exists,
+        lastModified: new Date(lastModified).toISOString(),
+        size: size
+      };
+    });
+    
+    // Obtener estado actual
+    const lastState = getLastCaptureState();
+    const now = Date.now();
+    const lastStateAge = now - lastState.timestamp;
+    
+    // Crear respuesta enriquecida
+    const response = {
+      items: availableItems, 
+      generatedAt: new Date().toISOString(),
+      loading: captureInProgress,
+      progress: captureProgress,
+      total: totalDashboards,
+      available: availableItems.filter(i => i.available).length,
+      server: {
+        pid: process.pid,
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        lastState: {
+          ...lastState,
+          age: Math.round(lastStateAge / 1000),
+          ageMinutes: Math.round(lastStateAge / 1000 / 60)
+        }
+      }
+    };
+    
+    console.log(`📋 API List: ${response.available}/${TARGETS.length} dashboards disponibles`);
+    res.json(response);
+  } catch (error) {
+    console.error('Error en /api/list:', error);
+    res.status(500).json({ error: 'Error interno del servidor', message: error.message });
+  }
 });
 
-// Endpoint de estado de progreso
+// Endpoint de estado de progreso mejorado
 app.get('/api/status', (req, res) => {
-  res.json({
-    loading: captureInProgress,
-    progress: captureProgress,
-    total: totalDashboards,
-    successful: successfulCaptures,
-    failed: failedCaptures,
-    percentage: totalDashboards > 0 ? Math.round((captureProgress / totalDashboards) * 100) : 0
-  });
+  try {
+    // Obtener estado actual
+    const lastState = getLastCaptureState();
+    const now = Date.now();
+    
+    res.json({
+      timestamp: now,
+      datetime: new Date(now).toISOString(),
+      loading: captureInProgress,
+      progress: captureProgress,
+      total: totalDashboards,
+      successful: successfulCaptures,
+      failed: failedCaptures,
+      percentage: totalDashboards > 0 ? Math.round((captureProgress / totalDashboards) * 100) : 0,
+      server: {
+        pid: process.pid,
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        lastCaptureState: lastState
+      }
+    });
+  } catch (error) {
+    console.error('Error en /api/status:', error);
+    res.status(500).json({ error: 'Error interno del servidor', message: error.message });
+  }
+});
+
+// 📊 Nuevo endpoint para diagnóstico
+app.get('/api/diagnostics', (req, res) => {
+  try {
+    // Verificar archivos
+    const files = TARGETS.map(t => {
+      const imagePath = path.join(shotsDir, `${t.id}.png`);
+      let stats = null;
+      
+      try {
+        if (fs.existsSync(imagePath)) {
+          stats = fs.statSync(imagePath);
+        }
+      } catch (e) {}
+      
+      return {
+        id: t.id,
+        path: imagePath,
+        exists: fs.existsSync(imagePath),
+        size: stats ? stats.size : 0,
+        modified: stats ? stats.mtime : null,
+        age: stats ? (Date.now() - stats.mtime) / 1000 : null
+      };
+    });
+    
+    // Obtener información del sistema
+    const diagnostics = {
+      timestamp: Date.now(),
+      datetime: new Date().toISOString(),
+      process: {
+        pid: process.pid,
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        versions: process.versions,
+        env: {
+          NODE_ENV: process.env.NODE_ENV,
+          PORT: process.env.PORT
+        }
+      },
+      capture: {
+        inProgress: captureInProgress,
+        progress: captureProgress,
+        total: totalDashboards,
+        successful: successfulCaptures,
+        failed: failedCaptures,
+        lastState: getLastCaptureState()
+      },
+      files: files
+    };
+    
+    res.json(diagnostics);
+  } catch (error) {
+    console.error('Error en /api/diagnostics:', error);
+    res.status(500).json({ error: 'Error interno del servidor', message: error.message });
+  }
 });
 
 // Arranca el servidor en el puerto configurado
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Carousel listo en http://localhost:${PORT}`));
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Carousel listo en http://localhost:${PORT}`);
+  console.log(`📊 Diagnósticos disponibles en http://localhost:${PORT}/api/diagnostics`);
+});
 
-// Manejo de señales para evitar que Render reinicie el servicio
+// Configurar timeouts del servidor para evitar cierres inesperados
+server.timeout = 300000; // 5 minutos
+server.keepAliveTimeout = 120000; // 2 minutos
+
+// Manejo robusto de señales para evitar que Render reinicie el servicio
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM recibido, cerrando gracefully...');
-  process.exit(0);
+  console.log('⚠️ SIGTERM recibido, cerrando gracefully...');
+  try {
+    // Guardar estado actual
+    const currentIndex = TARGETS.findIndex(t => t.id === `dashboard${captureProgress}`);
+    if (currentIndex >= 0) {
+      saveLastCaptureState(currentIndex);
+    }
+    
+    // Cerrar servidor HTTP
+    server.close(() => {
+      console.log('✅ Servidor HTTP cerrado correctamente');
+      process.exit(0);
+    });
+    
+    // Forzar salida después de timeout si el cierre graceful falla
+    setTimeout(() => {
+      console.log('⚠️ Tiempo de espera agotado, forzando salida...');
+      process.exit(1);
+    }, 10000);
+  } catch (e) {
+    console.error('❌ Error durante cierre graceful:', e);
+    process.exit(1);
+  }
 });
 
 process.on('SIGINT', async () => {
-  console.log('SIGINT recibido, cerrando gracefully...');
-  process.exit(0);
+  console.log('⚠️ SIGINT recibido, cerrando gracefully...');
+  try {
+    // Guardar estado actual
+    const currentIndex = TARGETS.findIndex(t => t.id === `dashboard${captureProgress}`);
+    if (currentIndex >= 0) {
+      saveLastCaptureState(currentIndex);
+    }
+    
+    // Cerrar servidor HTTP
+    server.close(() => {
+      console.log('✅ Servidor HTTP cerrado correctamente');
+      process.exit(0);
+    });
+    
+    // Forzar salida después de timeout si el cierre graceful falla
+    setTimeout(() => {
+      console.log('⚠️ Tiempo de espera agotado, forzando salida...');
+      process.exit(1);
+    }, 10000);
+  } catch (e) {
+    console.error('❌ Error durante cierre graceful:', e);
+    process.exit(1);
+  }
 });
 
 // Manejo de errores no capturados para evitar crashes
 process.on('uncaughtException', (error) => {
-  console.error('Error no capturado:', error);
+  console.error('❌ Error no capturado:', error);
+  
+  // Registrar evento de crash para diagnóstico
+  try {
+    fs.writeFileSync(
+      path.join(__dirname, `crash-${Date.now()}.log`),
+      JSON.stringify({
+        timestamp: Date.now(),
+        error: {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        },
+        process: {
+          pid: process.pid,
+          uptime: process.uptime(),
+          memory: process.memoryUsage()
+        }
+      }, null, 2)
+    );
+  } catch (e) {
+    console.error('❌ Error guardando log de crash:', e);
+  }
+  
   // No salir del proceso, solo loggear
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Promise rechazada no manejada en:', promise, 'razón:', reason);
+  console.error('❌ Promise rechazada no manejada:', reason);
+  
+  // Registrar evento para diagnóstico
+  try {
+    fs.writeFileSync(
+      path.join(__dirname, `rejection-${Date.now()}.log`),
+      JSON.stringify({
+        timestamp: Date.now(),
+        reason: reason instanceof Error ? {
+          message: reason.message,
+          stack: reason.stack,
+          name: reason.name
+        } : String(reason),
+        process: {
+          pid: process.pid,
+          uptime: process.uptime(),
+          memory: process.memoryUsage()
+        }
+      }, null, 2)
+    );
+  } catch (e) {
+    console.error('❌ Error guardando log de rejection:', e);
+  }
+  
   // No salir del proceso, solo loggear
 });
