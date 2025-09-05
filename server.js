@@ -198,10 +198,10 @@ async function captureWithRetries(browser, target, maxRetries = 2, isInitialLoad
   return false;
 }
 
-// Función principal que toma capturas de todas las URLs - SIMPLIFICADA
+// Función principal que toma capturas de todas las URLs - CON REINICIO DE NAVEGADOR
 async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura SECUENCIAL SIMPLE de ${TARGETS.length} dashboards`);
-  console.log(`🔧 Configuración: ${WAIT_TIME_PER_DASHBOARD/1000}s por dashboard, secuencial`);
+  console.log(`[DEBUG] Iniciando captura SECUENCIAL con reinicio de navegador cada 4 dashboards`);
+  console.log(`🔧 Configuración: ${WAIT_TIME_PER_DASHBOARD/1000}s por dashboard, reinicio cada 4`);
   
   captureInProgress = true;
   captureProgress = 0;
@@ -209,48 +209,66 @@ async function captureAll() {
   failedCaptures = 0;
   totalDashboards = TARGETS.length;
   
-  let browser;
   const startTime = Date.now();
+  const BATCH_SIZE = 4; // Reiniciar navegador cada 4 dashboards
   
   try {
-    console.log('🌐 Iniciando navegador...');
-    
-    browser = await puppeteer.launch({
-      args: [
-        ...chromium.args,
-        '--max-old-space-size=400',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-sandbox'
-      ],
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-      protocolTimeout: 180000,
-    });
-
-    // Procesar dashboards UNO POR UNO - SIMPLE
-    for (const target of TARGETS) {
-      console.log(`\n📊 Capturando: ${target.id}`);
-      await captureWithRetries(browser, target);
-      captureProgress++;
-      console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
+    // Procesar en lotes de 4 dashboards
+    for (let i = 0; i < TARGETS.length; i += BATCH_SIZE) {
+      const batch = TARGETS.slice(i, i + BATCH_SIZE);
+      console.log(`\n🔄 Procesando lote ${Math.floor(i/BATCH_SIZE) + 1}: ${batch.map(t => t.id).join(', ')}`);
       
-      // Pausa breve entre dashboards
-      await new Promise(res => setTimeout(res, 2000));
+      let browser;
+      try {
+        console.log('🌐 Iniciando navegador fresco...');
+        
+        browser = await puppeteer.launch({
+          args: [
+            ...chromium.args,
+            '--max-old-space-size=400',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--no-sandbox'
+          ],
+          defaultViewport: chromium.defaultViewport,
+          executablePath: await chromium.executablePath(),
+          headless: chromium.headless,
+          protocolTimeout: 180000,
+        });
+
+        // Procesar los dashboards de este lote
+        for (const target of batch) {
+          console.log(`\n📊 Capturando: ${target.id}`);
+          await captureWithRetries(browser, target);
+          captureProgress++;
+          console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
+          
+          // Pausa breve entre dashboards del mismo lote
+          await new Promise(res => setTimeout(res, 2000));
+        }
+        
+      } finally {
+        if (browser) {
+          try {
+            await browser.close();
+            console.log(`✅ Navegador del lote ${Math.floor(i/BATCH_SIZE) + 1} cerrado correctamente`);
+          } catch (e) {
+            console.error(`⚠️  Error cerrando navegador del lote: ${e.message}`);
+          }
+        }
+        
+        // Pausa entre lotes para liberar memoria del sistema
+        if (i + BATCH_SIZE < TARGETS.length) {
+          console.log(`🧹 Pausa de 10 segundos entre lotes para limpieza de memoria...`);
+          if (global.gc) global.gc();
+          await new Promise(res => setTimeout(res, 10000));
+        }
+      }
     }
     
   } catch (mainError) {
     console.error('❌ Error principal en captureAll:', mainError);
   } finally {
-    if (browser) {
-      try {
-        await browser.close();
-        console.log('✅ Navegador cerrado correctamente');
-      } catch (e) {
-        console.error('⚠️  Error cerrando navegador:', e.message);
-      }
-    }
     captureInProgress = false;
     
     const endTime = Date.now();
@@ -262,10 +280,11 @@ async function captureAll() {
   }
 }
 
-// 🚀 INICIO SIMPLE DEL SISTEMA
+// 🚀 INICIO CON REINICIO DE NAVEGADOR
 console.log('\n🎯 ============ INICIANDO SISTEMA DE DASHBOARDS ============');
 console.log(`📊 Total de dashboards configurados: ${TARGETS.length}`);
-console.log(`💾 Modo de captura: SECUENCIAL SIMPLE`);
+console.log(`💾 Modo de captura: SECUENCIAL CON REINICIO`);
+console.log(`🔄 Reinicio de navegador cada 4 dashboards`);
 console.log(`⚡ Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
 console.log(`🔄 Intervalo de actualización: ${CAPTURE_EVERY_MIN} minutos`);
 console.log(`⏱️  Tiempo estimado total: ~${Math.round(TARGETS.length * WAIT_TIME_PER_DASHBOARD / 1000 / 60)} minutos`);
