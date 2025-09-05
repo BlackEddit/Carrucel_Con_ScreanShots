@@ -100,7 +100,7 @@ let successfulCaptures = 0;
 let failedCaptures = 0;
 
 // Función para capturar un dashboard individual con reintentos
-async function captureWithRetries(browser, target, maxRetries = 2) {
+async function captureWithRetries(browser, target, maxRetries = 2, isInitialLoad = false) {
   // Usar tiempo completo para todos los dashboards
   const waitTime = WAIT_TIME_PER_DASHBOARD;
   
@@ -198,56 +198,10 @@ async function captureWithRetries(browser, target, maxRetries = 2) {
   return false;
 }
 
-// Función para procesar dashboards con prioridad
-async function captureInBatches(browser, targets, batchSize) {
-  const results = [];
-  
-  // FASE 1: Capturar los primeros 3 dashboards con tiempo completo
-  console.log(`\n🚀 FASE 1: Capturando primeros 3 dashboards con tiempo completo (60s cada uno)`);
-  const priorityTargets = targets.slice(0, 3);
-  
-  for (const target of priorityTargets) {
-    console.log(`\n🎯 Capturando dashboard prioritario: ${target.id}`);
-    const success = await captureWithRetries(browser, target, 2, true); // isInitialLoad = true
-    results.push({ target, success });
-    captureProgress++;
-    console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
-    
-    // Pausa entre dashboards prioritarios
-    console.log(`⏱️  Pausa de 3 segundos...`);
-    await new Promise(res => setTimeout(res, 3000));
-  }
-  
-  console.log(`\n✅ FASE 1 COMPLETADA: ${priorityTargets.length} dashboards prioritarios listos para el carrusel!`);
-  
-  // FASE 2: Capturar el resto con tiempo reducido
-  const remainingTargets = targets.slice(3);
-  if (remainingTargets.length > 0) {
-    console.log(`\n🚀 FASE 2: Capturando ${remainingTargets.length} dashboards restantes con tiempo optimizado`);
-    
-    for (const target of remainingTargets) {
-      console.log(`\n📊 Capturando dashboard: ${target.id}`);
-      const success = await captureWithRetries(browser, target, 2, false); // isInitialLoad = false
-      results.push({ target, success });
-      captureProgress++;
-      console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
-      
-      // Pausa y limpieza entre dashboards
-      if (global.gc) {
-        global.gc();
-        console.log(`🧹 Garbage collection ejecutado`);
-      }
-      await new Promise(res => setTimeout(res, 2000));
-    }
-  }
-  
-  return results;
-}
-
-// Función principal que toma capturas de todas las URLs
+// Función principal que toma capturas de todas las URLs - SIMPLIFICADA
 async function captureAll() {
-  console.log(`[DEBUG] Iniciando captura CON PRIORIDAD de ${TARGETS.length} dashboards (optimizado para 512MB)`);
-  console.log(`🔧 Estrategia: 3 dashboards prioritarios (60s) + resto optimizado (${WAIT_TIME_PER_DASHBOARD/1000}s)`);
+  console.log(`[DEBUG] Iniciando captura SECUENCIAL SIMPLE de ${TARGETS.length} dashboards`);
+  console.log(`🔧 Configuración: ${WAIT_TIME_PER_DASHBOARD/1000}s por dashboard, secuencial`);
   
   captureInProgress = true;
   captureProgress = 0;
@@ -261,29 +215,30 @@ async function captureAll() {
   try {
     console.log('🌐 Iniciando navegador...');
     
-    // Configuración ultra-optimizada para 512MB RAM
     browser = await puppeteer.launch({
       args: [
         ...chromium.args,
-        '--max-old-space-size=400', // Solo 400MB para no rebasar límite
-        '--disable-background-timer-throttling',
-        '--disable-renderer-backgrounding',
+        '--max-old-space-size=400',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-web-security',
-        '--disable-extensions',
-        '--disable-plugins'
+        '--no-sandbox'
       ],
       defaultViewport: chromium.defaultViewport,
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
-      protocolTimeout: 180000, // 3 minutos timeout reducido
+      protocolTimeout: 180000,
     });
 
-    // Procesar dashboards secuencialmente para evitar OOM
-    await captureInBatches(browser, TARGETS, MAX_CONCURRENT_CAPTURES); // Ahora será 1 por vez
+    // Procesar dashboards UNO POR UNO - SIMPLE
+    for (const target of TARGETS) {
+      console.log(`\n📊 Capturando: ${target.id}`);
+      await captureWithRetries(browser, target);
+      captureProgress++;
+      console.log(`📊 Progreso: ${captureProgress}/${totalDashboards} (${successfulCaptures} exitosos, ${failedCaptures} fallidos)`);
+      
+      // Pausa breve entre dashboards
+      await new Promise(res => setTimeout(res, 2000));
+    }
     
   } catch (mainError) {
     console.error('❌ Error principal en captureAll:', mainError);
@@ -303,28 +258,23 @@ async function captureAll() {
     console.log(`\n🎉 [FINISH] Captura completada en ${duration} segundos:`);
     console.log(`   ✅ Exitosos: ${successfulCaptures}`);
     console.log(`   ❌ Fallidos: ${failedCaptures}`);
-    console.log(`   📊 Total: ${totalDashboards} dashboards`);
-    console.log(`   ⚡ Promedio: ${Math.round(duration/totalDashboards)} segundos por dashboard\n`);
+    console.log(`   📊 Total: ${totalDashboards} dashboards\n`);
   }
 }
 
-// 🚀 INICIO OPTIMIZADO PARA 512MB RAM - ESTRATEGIA DE CARGA PRIORITARIA
+// 🚀 INICIO SIMPLE DEL SISTEMA
 console.log('\n🎯 ============ INICIANDO SISTEMA DE DASHBOARDS ============');
 console.log(`📊 Total de dashboards configurados: ${TARGETS.length}`);
-console.log(`💾 Modo de captura: SECUENCIAL CON PRIORIDAD`);
-console.log(`🎯 FASE 1: Primeros 3 dashboards (60s cada uno) = ~3 minutos`);
-console.log(`⚡ FASE 2: Resto de dashboards (${WAIT_TIME_PER_DASHBOARD/1000}s cada uno)`);
+console.log(`💾 Modo de captura: SECUENCIAL SIMPLE`);
+console.log(`⚡ Tiempo por dashboard: ${WAIT_TIME_PER_DASHBOARD/1000} segundos`);
 console.log(`🔄 Intervalo de actualización: ${CAPTURE_EVERY_MIN} minutos`);
-console.log(`⏱️  Tiempo estimado total: ~${Math.round((3*60 + (TARGETS.length-3)*WAIT_TIME_PER_DASHBOARD/1000)/60)} minutos`);
+console.log(`⏱️  Tiempo estimado total: ~${Math.round(TARGETS.length * WAIT_TIME_PER_DASHBOARD / 1000 / 60)} minutos`);
 
-// Crear placeholders para que el carrusel funcione inmediatamente
-createPlaceholderImages();
-
-// Lanza una captura al inicio (esto ahora será PARALELO y más rápido)
-console.log('\n🚀 Iniciando primera captura de dashboards...');
+// Iniciar captura inmediatamente
+console.log('\n🚀 Iniciando captura de dashboards...');
 captureAll();
 
-// Programa capturas periódicas cada N minutos
+// Programar capturas cada 30 minutos
 setInterval(() => {
   console.log(`\n🔄 Iniciando actualización programada de dashboards...`);
   captureAll();
