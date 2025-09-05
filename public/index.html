@@ -252,8 +252,32 @@
           reconnectTimer = null;
         }
         
-        // Filtrar items válidos
-        items = data.items.filter(x => x && x.available); 
+        // Mantener dashboards en memoria y solo actualizar los que cambiaron
+        if (items.length === 0) {
+          // Primera carga - inicializar con todos los dashboards disponibles
+          items = data.items.filter(x => x && x.available);
+          console.log(`📊 Carga inicial: ${items.length} dashboards disponibles`);
+        } else {
+          // Actualización - mantener dashboards existentes y actualizar solo los disponibles
+          const newItems = data.items.filter(x => x && x.available);
+          
+          // Para cada nuevo dashboard disponible, actualizar el correspondiente en la lista
+          newItems.forEach(newItem => {
+            const existingIndex = items.findIndex(item => item.id === newItem.id);
+            if (existingIndex >= 0) {
+              // Actualizar si ya existe
+              items[existingIndex] = newItem;
+              console.log(`🔄 Dashboard actualizado: ${newItem.id}`);
+            } else {
+              // Agregar si es nuevo
+              items.push(newItem);
+              console.log(`➕ Nuevo dashboard agregado: ${newItem.id}`);
+            }
+          });
+          
+          // Contar dashboards actualizados
+          console.log(`📊 Total actual: ${items.length} dashboards en memoria`);
+        }
         
         // Actualizar información de progreso y servidor
         updateProgress(data);
@@ -347,8 +371,16 @@
     function show(i) {
       if (!items.length) return;
       
+      // Calcular índice correcto incluso si es negativo
       idx = (i + items.length) % items.length;
       const item = items[idx];
+      
+      if (!item) {
+        console.error(`Error: No se encontró dashboard en índice ${idx}`);
+        return;
+      }
+      
+      console.log(`🔍 Mostrando dashboard ${idx+1}/${items.length}: ${item.id}`);
       
       // Actualizar src de la imagen con cache-bust
       frame.src = item.img + `?t=${Date.now()}`;
@@ -357,6 +389,11 @@
       currentName.textContent = item.id;
       currentIndex.textContent = idx + 1;
       lastUpdated.textContent = formatDate(item.lastModified);
+      
+      // Log detallado para diagnóstico
+      if (idx === items.length - 1) {
+        console.log(`⚠️ Último dashboard alcanzado (${idx+1}/${items.length}). Próximo será el primero.`);
+      }
     }
 
     // Iniciar reproducción automática
@@ -397,6 +434,11 @@
         }, 60000); // Cada 60 segundos en modo normal
       }
     }, 5000); // Cada 5 segundos durante la carga inicial
+    
+    // MONITOREO ESPECIAL: Verificar cambios en el array de items
+    setInterval(() => {
+      console.log(`📊 Estado del carrusel: ${items.length} dashboards, índice actual=${idx+1}`);
+    }, 120000); // Cada 2 minutos
   </script>
 </body>
 </html>

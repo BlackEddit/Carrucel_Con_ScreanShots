@@ -77,11 +77,15 @@ fs.mkdirSync(shotsDir, { recursive: true });
 function createPlaceholderImages() {
   console.log('🖼️  Creando imágenes placeholder para inicio inmediato...');
   
+  // Identificar dashboards que necesitan placeholder
+  const missingDashboards = [];
+  
   TARGETS.forEach(target => {
     const imagePath = path.join(shotsDir, `${target.id}.png`);
     
     // Solo crear placeholder si no existe la imagen real
     if (!fs.existsSync(imagePath)) {
+      missingDashboards.push(target.id);
       try {
         // Crear una imagen placeholder simple (usando SVG como texto)
         const placeholderSVG = `
@@ -97,23 +101,20 @@ function createPlaceholderImages() {
         `;
         
         // Escribir directamente el SVG al archivo de imagen
-        // En un entorno real deberías convertir SVG a PNG, pero esto funciona para testing
         fs.writeFileSync(imagePath, placeholderSVG);
         console.log(`📋 Placeholder creado para ${target.id}`);
       } catch (e) {
         console.log(`⚠️  No se pudo crear placeholder para ${target.id}:`, e.message);
       }
     } else {
-      console.log(`✅ Imagen existente para ${target.id}, usando la actual`);
+      console.log(`✅ Imagen existente para ${target.id}, no se necesita placeholder`);
     }
   });
 
-  // Verificar que todos los dashboards tengan imagen
-  const missingImages = TARGETS.filter(t => !fs.existsSync(path.join(shotsDir, `${t.id}.png`)));
-  if (missingImages.length > 0) {
-    console.log(`⚠️ ADVERTENCIA: ${missingImages.length} dashboards sin imagen:`, missingImages.map(t => t.id).join(', '));
+  if (missingDashboards.length > 0) {
+    console.log(`📊 Placeholders creados para: ${missingDashboards.join(', ')}`);
   } else {
-    console.log(`✅ Todos los dashboards tienen imagen disponible para el carrusel`);
+    console.log(`✅ Todos los dashboards tienen imagen disponible, no se necesitan placeholders`);
   }
 }
 
@@ -239,24 +240,76 @@ function getLastCaptureState() {
   try {
     if (fs.existsSync(CAPTURE_STATE_FILE)) {
       const data = fs.readFileSync(CAPTURE_STATE_FILE, 'utf8');
-      return JSON.parse(data);
+      console.log('📋 Archivo de estado encontrado');
+      const state = JSON.parse(data);
+      
+      // Verificar que el estado es válido (puede contener lastDashboardId como campo adicional)
+      if (typeof state.lastIndex !== 'number') {
+        console.warn('⚠️ Estado inválido, falta lastIndex');
+        state.lastIndex = -1;
+      }
+      
+      // Log más detallado del estado recuperado
+      console.log(`📊 Estado recuperado: último índice=${state.lastIndex}, timestamp=${new Date(state.timestamp).toISOString()}`);
+      return state;
+    } else {
+      console.log('⚠️ Archivo de estado no encontrado, creando uno nuevo');
+      
+      // Crear el archivo con un estado inicial
+      const initialState = { 
+        lastIndex: -1, 
+        capturedDashboards: [],
+        timestamp: Date.now(), 
+        pid: process.pid 
+      };
+      fs.writeFileSync(CAPTURE_STATE_FILE, JSON.stringify(initialState, null, 2));
+      return initialState;
     }
   } catch (e) {
     console.error('❌ Error leyendo archivo de estado:', e.message);
+    // Intentar eliminar el archivo corrupto
+    try {
+      if (fs.existsSync(CAPTURE_STATE_FILE)) {
+        fs.unlinkSync(CAPTURE_STATE_FILE);
+        console.log('🗑️ Archivo de estado corrupto eliminado');
+      }
+    } catch (err) {}
   }
-  return { lastIndex: -1, timestamp: 0 };
+  return { lastIndex: -1, capturedDashboards: [], timestamp: Date.now() };
 }
 
 // Función para guardar el estado actual de captura
 function saveLastCaptureState(index) {
   try {
+    // Obtener estado actual para actualizar lista de capturados
+    const currentState = getLastCaptureState();
+    let capturedList = currentState.capturedDashboards || [];
+    
+    // Verificar si este dashboard ya está en la lista de capturados
+    const dashboardId = TARGETS[index].id;
+    if (!capturedList.includes(dashboardId)) {
+      capturedList.push(dashboardId);
+    }
+    
+    // Usar escritura segura con archivo temporal
+    const tempFile = CAPTURE_STATE_FILE + '.tmp';
+    
     const state = { 
-      lastIndex: index, 
+      lastIndex: index,
+      lastDashboardId: dashboardId,
+      capturedDashboards: capturedList,
       timestamp: Date.now(),
       pid: process.pid
     };
-    fs.writeFileSync(CAPTURE_STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
-    console.log(`🔒 Estado guardado: último dashboard capturado = ${index}`);
+    
+    // Escribir a archivo temporal primero
+    fs.writeFileSync(tempFile, JSON.stringify(state, null, 2), 'utf8');
+    
+    // Renombrar para operación atómica
+    fs.renameSync(tempFile, CAPTURE_STATE_FILE);
+    
+    console.log(`🔒 Estado guardado: último dashboard capturado = ${index} (${dashboardId})`);
+    console.log(`📊 Total capturados: ${capturedList.length}/${TARGETS.length}`);
   } catch (e) {
     console.error('❌ Error guardando archivo de estado:', e.message);
   }
@@ -273,7 +326,7 @@ async function captureOne(index) {
   }
 
   const target = TARGETS[index];
-  console.log(`\n� Capturando individualmente: ${target.id}`);
+  console.log(`\n📸 Capturando individualmente: ${target.id}`);
   
   // Guardar estado ANTES de iniciar la captura para persistencia
   saveLastCaptureState(index);
@@ -302,6 +355,8 @@ async function captureOne(index) {
     // Actualizar contadores
     if (result) {
       successfulCaptures++;
+      // Re-guardar estado DESPUÉS de captura exitosa
+      saveLastCaptureState(index);
     } else {
       failedCaptures++;
     }
@@ -388,12 +443,27 @@ createPlaceholderImages();
 const lastState = getLastCaptureState();
 console.log(`🔍 Estado previo detectado:`, lastState);
 
+// Verificar imágenes existentes
+let existingImages = [];
+try {
+  existingImages = fs.readdirSync(shotsDir)
+    .filter(file => file.endsWith('.png'))
+    .map(file => file.replace('.png', ''));
+  console.log(`🖼️ Imágenes existentes: ${existingImages.length}/${TARGETS.length}`);
+} catch (e) {
+  console.error('❌ Error verificando imágenes existentes:', e.message);
+}
+
 // Iniciar captura incremental con primera ronda
 const startCaptures = async () => {
   // Si es un reinicio y ya tenemos dashboards, capturar solo uno y programar los siguientes
   if (lastState.lastIndex >= 0) {
-    console.log(`� REINICIO DETECTADO - Último dashboard capturado: ${lastState.lastIndex}`);
+    console.log(`🔄 REINICIO DETECTADO - Último dashboard capturado: ${lastState.lastIndex}`);
     console.log(`⏱️  Tiempo desde última captura: ${((Date.now() - lastState.timestamp) / 1000 / 60).toFixed(1)} minutos`);
+    
+    // Verificar lista de dashboards ya capturados
+    const capturedList = lastState.capturedDashboards || [];
+    console.log(`📊 Dashboards ya capturados: ${capturedList.length}/${TARGETS.length}`);
     
     // Empezar con el siguiente dashboard al último capturado
     let nextIndex = (lastState.lastIndex + 1) % TARGETS.length;
@@ -402,8 +472,15 @@ const startCaptures = async () => {
     // Capturar el siguiente dashboard
     await captureOne(nextIndex);
     
-    // Programar la captura rotativa
-    scheduleRotatingCaptures(nextIndex);
+    // Programar la captura rotativa comenzando con el siguiente
+    scheduleRotatingCaptures((nextIndex + 1) % TARGETS.length);
+  } else if (existingImages.length > 0) {
+    // Si no hay estado pero hay imágenes, comenzar con actualización rotativa
+    console.log(`🔄 No hay estado pero se encontraron ${existingImages.length} imágenes`);
+    console.log(`🎯 Iniciando actualización rotativa sin captura completa`);
+    
+    // Programar actualizaciones rotativas desde el primer dashboard
+    scheduleRotatingCaptures(0);
   } else {
     // Primera ejecución - capturar todo desde el inicio
     console.log('\n🚀 Primera ejecución - Iniciando captura completa...');
@@ -418,20 +495,35 @@ const startCaptures = async () => {
 function scheduleRotatingCaptures(startIndex) {
   let currentIndex = startIndex;
   
+  // Cancelar intervalo previo si existe
+  if (global.rotationInterval) {
+    clearInterval(global.rotationInterval);
+    console.log('⚠️ Intervalo previo cancelado');
+  }
+  
   // Calcular intervalo para que cada dashboard se actualice aproximadamente cada CAPTURE_EVERY_MIN minutos
   const interval = Math.floor(CAPTURE_EVERY_MIN * 60 * 1000 / TARGETS.length);
   console.log(`⏱️  Programando actualización rotativa: un dashboard cada ${Math.round(interval/1000)} segundos`);
   
   // Programar actualizaciones rotativas
-  const rotationInterval = setInterval(async () => {
+  global.rotationInterval = setInterval(async () => {
     try {
       console.log(`\n🔄 Actualizando dashboard ${currentIndex + 1}/${TARGETS.length} (${TARGETS[currentIndex].id})`);
+      
+      // Guardar estado ANTES de capturar para mejor persistencia
+      saveLastCaptureState(currentIndex);
       
       // Capturar solo un dashboard
       await captureOne(currentIndex);
       
       // Avanzar al siguiente dashboard
       currentIndex = (currentIndex + 1) % TARGETS.length;
+      
+      // IMPORTANTE: Si completó el ciclo (volvió al inicio), guardar log específico
+      if (currentIndex === 0) {
+        console.log(`\n🔄 CICLO COMPLETADO: Se ha actualizado todos los ${TARGETS.length} dashboards`);
+        console.log(`⏱️ Timestamp ciclo completo: ${new Date().toISOString()}`);
+      }
       
     } catch (e) {
       console.error('❌ Error en actualización rotativa:', e);
@@ -441,9 +533,10 @@ function scheduleRotatingCaptures(startIndex) {
   }, interval);
   
   // Asegurar que el intervalo no impida que Node.js salga
-  rotationInterval.unref();
+  global.rotationInterval.unref();
   
   console.log(`✅ Sistema de actualización rotativa iniciado correctamente`);
+  console.log(`📝 Recordatorio: El sistema guardará el último estado entre reinicios`);
 }
 
 // Iniciar el sistema
@@ -487,6 +580,10 @@ app.get('/api/list', (req, res) => {
     const now = Date.now();
     const lastStateAge = now - lastState.timestamp;
     
+    // Obtener lista de dashboards ya capturados del estado persistente
+    const capturedDashboardIds = lastState.capturedDashboards || [];
+    console.log(`📊 Dashboards persistidos: ${capturedDashboardIds.length}/${TARGETS.length}`);
+    
     // Crear respuesta enriquecida
     const response = {
       items: availableItems, 
@@ -495,6 +592,7 @@ app.get('/api/list', (req, res) => {
       progress: captureProgress,
       total: totalDashboards,
       available: availableItems.filter(i => i.available).length,
+      capturedCount: capturedDashboardIds.length,
       server: {
         pid: process.pid,
         uptime: process.uptime(),
@@ -507,7 +605,7 @@ app.get('/api/list', (req, res) => {
       }
     };
     
-    console.log(`📋 API List: ${response.available}/${TARGETS.length} dashboards disponibles`);
+    console.log(`📋 API List: ${response.available}/${TARGETS.length} dashboards disponibles (${response.capturedCount} registrados en estado persistente)`);
     res.json(response);
   } catch (error) {
     console.error('Error en /api/list:', error);
