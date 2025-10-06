@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'; // Utilidad para rutas en ES Modules
 import puppeteer from 'puppeteer-core'; // Navegador automatizado para capturas
 import chromium from '@sparticuz/chromium'; // Chromium optimizado para serverless
 import dotenv from 'dotenv'; // Para leer variables de entorno
+import { capturarConReintentos, VIEWPORT } from './sources/modules/capturador-imagenes.js'; // Módulo de captura y procesamiento de imágenes
 dotenv.config();
 
 // DIAGNOSTICO: Registrar info del proceso al iniciar
@@ -36,15 +37,11 @@ const TARGETS = clean.split(';;;').map((url, i) => ({ id: `dashboard${i+1}`, url
 // Cada cuánto tiempo se actualizan las capturas
 const CAPTURE_EVERY_MIN = 30; // 30 minutos para 12 dsashboards
 
-// 3) Viewport de las capturas
-// Tamaño de la ventana del navegador para la captura
-const VIEWPORT = { width: 3200, height: 1800, deviceScaleFactor: 1 };
-
-// 4) Timeout de carga por página (ms) - REDUCIDO para captura inicial más rápida
+// 3) Timeout de carga por página (ms) - REDUCIDO para captura inicial más rápida
 // Tiempo máximo para que Puppeteer navegue a la página
 const PAGE_TIMEOUT_MS = 90_000; // 1.5 minutos para dashboards pesados
 
-// 5) Configuración de captura SECUENCIAL optimizada para 512MB RAM
+// 4) Configuración de captura SECUENCIAL optimizada para 512MB RAM
 const MAX_CONCURRENT_CAPTURES = 1; // Solo 1 dashboard por vez para evitar OOM
 const WAIT_TIME_PER_DASHBOARD = 90000; // 90 segundos - más tiempo para que carguen completamente
 
@@ -132,101 +129,28 @@ let failedCaptures = 0;
 
 // Función para capturar un dashboard individual con reintentos
 async function captureWithRetries(browser, target, maxRetries = 2, isInitialLoad = false) {
-  // Usar tiempo completo para todos los dashboards
   const waitTime = WAIT_TIME_PER_DASHBOARD;
   
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    let page;
-    try {
-      console.log(`Navegando a ${target.id} (intento ${attempt}/${maxRetries}): ${target.url}`);
-      if (isInitialLoad) {
-        console.log(`🎯 Carga inicial - esperando ${waitTime/1000}s para renderizado completo`);
-      }
-      
-      // Crear nueva página con timeout individual
-      page = await browser.newPage();
-      await page.setViewport(VIEWPORT);
-      
-      // Configurar timeouts específicos para esta página
-      page.setDefaultNavigationTimeout(120000); // 2 minutos para navegación
-      page.setDefaultTimeout(60000); // 1 minuto para otras operaciones
-
-      // Aplica headers si se definieron
-      if (AUTH.headers && Object.keys(AUTH.headers).length) {
-        await page.setExtraHTTPHeaders(AUTH.headers);
-      }
-
-      // Inyecta cookies si hay
-      if (AUTH.cookies && AUTH.cookies.length) {
-        await page.setCookie(...AUTH.cookies);
-      }
-
-      await page.goto(target.url, { 
-        waitUntil: 'networkidle2', // Espera a que la red esté tranquila (mejor para dashboards)
-        timeout: PAGE_TIMEOUT_MS
-      });
-      
-      console.log(`Esperando carga completa para ${target.id}... (${waitTime/1000}s)`);
-      
-      // Esperar tiempo base
-      await new Promise(res => setTimeout(res, waitTime));
-      
-      // Verificar si hay elementos de loading y esperar un poco más si es necesario
-      try {
-        const loadingElements = await page.$$eval('[class*="loading"], [class*="Loading"], .dt-loading', 
-          elements => elements.length
-        );
-        
-        if (loadingElements > 0) {
-          console.log(`⏳ ${target.id} todavía cargando, esperando 30s adicionales...`);
-          await new Promise(res => setTimeout(res, 30000));
-        }
-      } catch (e) {
-        // Si no puede evaluar, simplemente continúa
-      }
-      
-      const out = path.join(shotsDir, `${target.id}.png`);
-      await page.screenshot({
-        path: out,
-        clip: {
-          x: 0,
-          y: 0,
-          width: Math.floor(VIEWPORT.width * (2/3)), // 2/3 del ancho = 2133px
-          height: Math.floor(VIEWPORT.height * (2/3)) // 2/3 del alto = 1200px
-        },
-        timeout: 45000 // 45 segundos para screenshot
-      });
-      
-      console.log(`[OK] ${target.id} capturado exitosamente`);
-      successfulCaptures++;
-      
-      // Limpieza agresiva de memoria después de cada captura exitosa
-      if (global.gc) {
-        global.gc();
-        console.log(`🧹 Limpieza de memoria ejecutada para ${target.id}`);
-      }
-      
-      return true;
-      
-    } catch (error) {
-      console.error(`[FAIL] ${target.id} (intento ${attempt}/${maxRetries}):`, error.message);
-      if (attempt === maxRetries) {
-        failedCaptures++;
-        return false;
-      }
-      // Esperar antes del siguiente intento
-      await new Promise(res => setTimeout(res, 5000));
-    } finally {
-      if (page) {
-        try {
-          await page.close();
-        } catch (e) {
-          console.log(`Error cerrando página ${target.id}:`, e.message);
-        }
-      }
-    }
+  // Llamar al módulo de captura con todos los parámetros necesarios
+  const success = await capturarConReintentos(
+    browser,
+    target,
+    waitTime,
+    shotsDir,
+    AUTH,
+    PAGE_TIMEOUT_MS,
+    maxRetries,
+    isInitialLoad
+  );
+  
+  // Actualizar contadores locales
+  if (success) {
+    successfulCaptures++;
+  } else {
+    failedCaptures++;
   }
-  return false;
+  
+  return success;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
